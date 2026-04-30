@@ -1,0 +1,65 @@
+name: 01 — start (label → trunk + PRD)
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  start:
+    if: github.event.label.name == 'ralph:start'
+    runs-on: ubuntu-latest
+    env:
+      GH_REPO: ${{ github.repository }}
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+      BASE_REF: feature/issue-${{ github.event.issue.number }}
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.COPILOT_USER_PAT }}
+          fetch-depth: 0
+
+      - name: Create feature trunk off main
+        run: |
+          set -euo pipefail
+          git config user.name  "ralph-bot"
+          git config user.email "ralph-bot@users.noreply.github.com"
+          if git ls-remote --exit-code --heads origin "${BASE_REF}" >/dev/null 2>&1; then
+            echo "Trunk ${BASE_REF} already exists; skipping create."
+          else
+            git switch -c "${BASE_REF}"
+            git push -u origin "${BASE_REF}"
+          fi
+
+      - name: Render PRD prompt
+        env:
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY:  ${{ github.event.issue.body }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/ralph
+          ./scripts/render-template.sh scripts/prompts/prd.md.tmpl > /tmp/ralph/prd-prompt.md
+          echo "::group::PRD prompt"
+          cat /tmp/ralph/prd-prompt.md
+          echo "::endgroup::"
+
+      - name: Assign Copilot for PRD
+        env:
+          GH_TOKEN:  ${{ secrets.COPILOT_USER_PAT }}
+          PRD_AGENT: ${{ vars.PRD_AGENT }}
+        run: |
+          ./scripts/assign-copilot.sh \
+            "${ISSUE_NUMBER}" \
+            "${BASE_REF}" \
+            /tmp/ralph/prd-prompt.md \
+            "${PRD_AGENT:-}"
+
+      - name: Enable auto-merge on Copilot's PRD PR
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_USER_PAT }}
+        run: ./scripts/enable-automerge.sh "${BASE_REF}" 900

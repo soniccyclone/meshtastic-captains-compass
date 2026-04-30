@@ -1,0 +1,46 @@
+name: Feature request (ralph pipeline)
+description: Open a feature for the Copilot ralph pipeline. Apply the `ralph:start` label after submitting.
+title: "[feature] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Filing this issue does **not** start the pipeline. After it's created, apply the `ralph:start` label to kick off the PRD → design → implementation flow.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What problem does this feature solve? Who feels it today?
+      placeholder: Users currently have to ... and that's painful because ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: What should be true after this ships? Outcomes, not implementation.
+      placeholder: After this ships, a user can ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints / non-negotiables
+      description: Hard requirements (compatibility, perf, security, deadlines, etc.).
+      placeholder: Must work with ..., must not break ..., must ship before ...
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Background / links
+      description: Anything the PRD agent should read to understand the situation. Doc links, prior issues, screenshots, etc.
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        After submitting: open the issue, click **Labels**, apply `ralph:start`. The pipeline will create a feature trunk and assign Copilot to write the PRD.

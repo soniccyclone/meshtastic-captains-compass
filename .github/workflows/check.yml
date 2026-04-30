@@ -1,0 +1,28 @@
+name: check (template self-CI)
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install actionlint + shellcheck
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y shellcheck
+          curl -sSLo /tmp/actionlint.tgz https://github.com/rhysd/actionlint/releases/download/v1.7.7/actionlint_1.7.7_linux_amd64.tar.gz
+          mkdir -p /tmp/actionlint && tar -xzf /tmp/actionlint.tgz -C /tmp/actionlint
+          sudo install /tmp/actionlint/actionlint /usr/local/bin/actionlint
+
+      - name: Run make test
+        run: make test
