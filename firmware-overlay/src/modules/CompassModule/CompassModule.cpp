@@ -31,6 +31,14 @@ CompassModule::CompassModule()
     if (inputBroker) _inputObserver.observe(inputBroker);
 }
 
+// --- UI refresh helper -------------------------------------------------
+
+void CompassModule::notifyUIChanged() {
+    UIFrameEvent e;
+    e.action = UIFrameEvent::Action::REGENERATE_FRAMESET;
+    notifyObservers(&e);
+}
+
 // --- UI overrides (delegate to CompassUI) -----------------------------
 
 bool CompassModule::wantUIFrame() {
@@ -104,6 +112,7 @@ void CompassModule::sendPacket(uint32_t to, uint8_t hopLimit, const meshtastic_C
 
 void CompassModule::sendCapabilityQuery() {
     _state.startDiscovery();
+    notifyUIChanged();
     meshtastic_CompassPacket pkt = meshtastic_CompassPacket_init_default;
     pkt.type = meshtastic_CompassMsgType_CAPABILITY_QUERY;
     sendPacket(NODENUM_BROADCAST, /*hop_limit=*/0, pkt);
@@ -118,6 +127,7 @@ void CompassModule::sendCapabilityAdv(uint32_t toNodeNum) {
 
 void CompassModule::sendPairRequest(uint32_t targetNodeNum) {
     _state.startPairRequest(targetNodeNum);
+    notifyUIChanged();
     meshtastic_CompassPacket pkt = meshtastic_CompassPacket_init_default;
     pkt.type = meshtastic_CompassMsgType_PAIR_REQUEST;
     sendPacket(targetNodeNum, /*hop_limit=*/0, pkt);
@@ -149,6 +159,7 @@ void CompassModule::sendSessionEnd() {
     pkt.type = meshtastic_CompassMsgType_SESSION_END;
     sendPacket(peer, /*hop_limit=*/3, pkt);
     _state.endSession();
+    notifyUIChanged();
 }
 
 // --- Per-message handlers ---------------------------------------------
@@ -168,6 +179,7 @@ void CompassModule::handleCapabilityAdv(const meshtastic_MeshPacket &mp,
 
 void CompassModule::handlePairRequest(const meshtastic_MeshPacket &mp) {
     _state.onPairRequestReceived(mp.from);
+    notifyUIChanged();
 }
 
 void CompassModule::handlePairAccept(const meshtastic_MeshPacket &mp) {
@@ -175,6 +187,7 @@ void CompassModule::handlePairAccept(const meshtastic_MeshPacket &mp) {
     const char *peerName = (info && info->has_user) ? info->user.long_name : "";
     _state.onPairAccepted(mp.from, peerName);
     sendPairConfirm(mp.from);
+    notifyUIChanged();
 }
 
 void CompassModule::handlePairConfirm(const meshtastic_MeshPacket &mp) {
@@ -184,6 +197,7 @@ void CompassModule::handlePairConfirm(const meshtastic_MeshPacket &mp) {
 
 void CompassModule::handlePairReject(const meshtastic_MeshPacket & /*mp*/) {
     _state.onPairRejected();
+    notifyUIChanged();
 }
 
 void CompassModule::handlePositionUpdate(const meshtastic_MeshPacket &mp,
@@ -196,18 +210,30 @@ void CompassModule::handlePositionUpdate(const meshtastic_MeshPacket &mp,
 void CompassModule::handleSessionEnd(const meshtastic_MeshPacket &mp) {
     if (mp.from != _state.session().peerNodeNum) return;
     _state.onSessionEnd();
+    notifyUIChanged();
 }
 
 // --- Scheduler ---------------------------------------------------------
 
 int32_t CompassModule::runOnce() {
     using compass::State;
-    if (_state.getState() == State::CALIBRATING && _mag.isReady()) {
+
+    // Backstop: catch any state transition that happened since the last
+    // tick (auto SESSION_PAUSED in particular, which has no explicit call
+    // site). Inline notifyUIChanged() calls in send/handle helpers cover
+    // user-action latency; this loop catches whatever they miss.
+    State current = _state.getState();
+    if (current != _prevState) {
+        notifyUIChanged();
+        _prevState = current;
+    }
+
+    if (current == State::CALIBRATING && _mag.isReady()) {
         int16_t mx = 0, my = 0, mz = 0;
         if (_mag.read(mx, my, mz)) _state.feedCalSample(mx, my, mz);
     }
 
-    switch (_state.getState()) {
+    switch (current) {
         case State::IDLE:
         case State::DISCOVERING:
         case State::AWAITING_PAIR_ACCEPT:
@@ -224,6 +250,8 @@ int32_t CompassModule::runOnce() {
     }
     return 1000;
 }
+
+
 
 int32_t CompassModule::tickTracked() {
     if (_state.session().peerNodeNum == 0) {

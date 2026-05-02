@@ -25,7 +25,11 @@
       "Bash(docker run *)",
       "Bash(grep -nB2 -A12 'struct InputEvent' vendor/meshtastic-firmware/src/input/InputBroker.h)",
       "Bash(grep -nB2 -A12 'class InputEvent\\\\|^struct InputEvent\\\\|InputEvent {' vendor/meshtastic-firmware/src/input/InputBroker.h)",
-      "Bash(grep -nB2 -A4 'class InputBroker' vendor/meshtastic-firmware/src/input/InputBroker.h)"
+      "Bash(grep -nB2 -A4 'class InputBroker' vendor/meshtastic-firmware/src/input/InputBroker.h)",
+      "Bash(grep -nA3 'INPUT_BROKER_SELECT_LONG.*\\\\|INPUT_BROKER_BACK\\\\|TRACKING_TREASURE\\\\|SESSION_PAUSED' firmware-overlay/src/modules/CompassModule/CompassUI.cpp)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)"
     ],
     "deny": [],
     "additionalDirectories": [

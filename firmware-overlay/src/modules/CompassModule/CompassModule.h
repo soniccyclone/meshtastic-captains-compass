@@ -46,6 +46,14 @@ public:
     compass::CompassState *state() { return &_state; }
     Magnetometer          *mag()   { return &_mag; }
 
+    // Tell the Screen subsystem to re-poll wantUIFrame() on every module
+    // and rebuild its frame list. Must be called whenever we transition into
+    // or out of a state where wantUIFrame() flips. Without this call, the
+    // screen continues to show the previous frame rotation regardless of
+    // our internal state. (See WaypointModule / CannedMessageModule for
+    // upstream's usage pattern.)
+    void notifyUIChanged();
+
     static CompassModule *instance;
 
 protected:
@@ -53,6 +61,7 @@ protected:
 
 private:
     compass::CompassState _state;
+    compass::State        _prevState = compass::State::IDLE;  // tick-based UI-refresh backstop
     Magnetometer          _mag;
     CompassUI             _ui{this};
     CallbackObserver<CompassModule, const InputEvent *> _inputObserver{

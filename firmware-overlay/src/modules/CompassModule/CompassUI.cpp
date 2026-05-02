@@ -241,7 +241,10 @@ int CompassUI::handleInputEvent(const InputEvent *e) {
         case State::DISCOVERING: {
             const uint8_t count = st->discoveredNodeCount();
             if (count == 0) {
-                if (e->inputEvent == INPUT_BROKER_SELECT_LONG) st->endSession();
+                if (e->inputEvent == INPUT_BROKER_SELECT_LONG) {
+                    st->endSession();
+                    _owner->notifyUIChanged();
+                }
                 return 0;
             }
             if (e->inputEvent == INPUT_BROKER_UP) {
@@ -253,6 +256,7 @@ int CompassUI::handleInputEvent(const InputEvent *e) {
             } else if (e->inputEvent == INPUT_BROKER_SELECT_LONG ||
                        e->inputEvent == INPUT_BROKER_BACK) {
                 st->endSession();
+                _owner->notifyUIChanged();
             }
             return 1;
         }
@@ -271,15 +275,18 @@ int CompassUI::handleInputEvent(const InputEvent *e) {
                     st->rejectPair();
                     _owner->sendPairReject(initiator);
                 }
+                _owner->notifyUIChanged();
             }
             return 1;
         }
         case State::CALIBRATING: {
             if (e->inputEvent == INPUT_BROKER_SELECT) {
                 st->finishCalibration();
+                _owner->notifyUIChanged();
             } else if (e->inputEvent == INPUT_BROKER_SELECT_LONG ||
                        e->inputEvent == INPUT_BROKER_BACK) {
                 st->endSession();
+                _owner->notifyUIChanged();
             }
             return 1;
         }
@@ -288,8 +295,11 @@ int CompassUI::handleInputEvent(const InputEvent *e) {
         case State::SESSION_PAUSED: {
             if (e->inputEvent == INPUT_BROKER_SELECT_LONG ||
                 e->inputEvent == INPUT_BROKER_BACK) {
-                // Release UI frame; tracking continues in background.
-                // (Screen->setFrames() is called by CompassModule's observer notify.)
+                // End session and refresh frame list so screen rotation
+                // returns to its normal behavior. The "minimize but keep
+                // tracking" UX is a v2 follow-up (bead -dyg).
+                st->endSession();
+                _owner->notifyUIChanged();
                 return 1;
             }
             return 0;
