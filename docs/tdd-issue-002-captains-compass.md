@@ -344,10 +344,10 @@ Three workflows, each with a single job. All run on `ubuntu-latest`. Verificatio
   - '.github/workflows/pr-build-t114.yml'
   ```
 - Concurrency group: `pr-build-t114-${{ github.event.pull_request.number }}`, `cancel-in-progress: true`.
-- Permissions: `contents: write`, `pull-requests: write`.
-- Steps 1–5: same as release.yml.
-- Step 6: `softprops/action-gh-release@v2` with `tag_name: v<date>-pr<num>.<run>`, `prerelease: true`, `target_commitish: ${{ github.event.pull_request.head.sha }}`.
-- Step 7: `actions/github-script@v7` posts a PR comment with the release URL and flash instructions.
+- Permissions: `contents: read`, `pull-requests: write`.
+- Steps 1–5: same Docker build as release.yml.
+- Step 6: `actions/upload-artifact@v4` uploads the firmware UF2(s) as a workflow artifact named `firmware-pr<num>-<run>`. **Releases are NOT published on PRs** — those only happen on merge to main via `release.yml`. Artifact retention: 30 days.
+- Step 7: `actions/github-script@v7` posts a PR comment linking to the workflow run page (where the artifact lives at the bottom under "Artifacts") with flash instructions.
 
 ### 5.3 upstream-drift.yml — weekly drift detection
 
