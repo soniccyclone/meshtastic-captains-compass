@@ -105,15 +105,15 @@ The feature has to be invisible when not in use. A user who never activates Comp
 
 **Pre-conditions:**
 - Both devices physically adjacent (pairing is intentionally direct-link only)
-- Both running this firmware
-- Neither currently in an active tracking session
+- Bob's device is powered on and running this firmware — he does not need to be in any menu
+- Neither device currently in an active tracking session
 
 **Journey:**
-1. Alice navigates to **Menu → Compass → Find Desire → [Node list]**.
-2. Display shows Meshtastic node list filtered to nodes that have advertised `COMPASS_APP` capability. Nodes are sorted by last-heard time.
+1. Alice navigates to **Menu → Compass → Find Desire**.
+2. On entry, Alice's firmware broadcasts a `CAPABILITY_QUERY` packet (`hop_limit=0`). Any adjacent Compass-capable device — regardless of what its user is doing — automatically responds with a `CAPABILITY_ADV` (`hop_limit=0`). Alice's device collects responses for 3 seconds, then displays the list. Nodes are sorted by signal strength (RSSI).
 3. Alice selects Bob's node. Display shows: `Send pair request to Bob? [YES / NO]`.
 4. Alice confirms. Firmware broadcasts a `PAIR_REQUEST` packet with `hop_limit=0` on port `COMPASS_APP`. Payload: Alice's node ID. Zero hops — intentionally direct-link only; pairing requires physical proximity.
-5. Bob's device receives the request. If Bob is in **Menu → Compass → Find Desire** (discovery mode): Bob's display shows `Alice wants to track you. [ACCEPT / REJECT]`.
+5. Bob's device receives the request. Bob's display shows `Alice wants to track you. [ACCEPT / REJECT]`, interrupting whatever screen is currently shown.
 6. Bob selects ACCEPT. Firmware sends unicast `PAIR_ACCEPT` back to Alice, `hop_limit=0`.
 7. Alice's device receives ACCEPT. Firmware sends unicast `PAIR_CONFIRM` to Bob, `hop_limit=0`.
 8. Both devices transition to **paired state**. Display on each shows `Paired: [other node name]`.
@@ -124,8 +124,8 @@ The feature has to be invisible when not in use. A user who never activates Comp
 **Error cases:**
 - Bob rejects: Alice's display shows `Pair rejected by Bob`. Returns to node list.
 - No response within 60s: `No response from Bob. Try again?` Returns to node list.
-- Bob is not in discovery mode: request is queued on Bob's device; Bob sees a notification banner on next screen wake: `Alice wants to track you`. Bob can accept or reject from notifications.
-- Alice selects a node that doesn't support COMPASS_APP (filtered out of list — shouldn't happen, but if stale capability data): pair request sent, no response, timeout as above.
+- No nodes respond to CAPABILITY_QUERY: list shows `No Compass nodes nearby`. User can pull-to-refresh to re-query.
+- Alice selects a node that doesn't respond to PAIR_REQUEST (stale CAPABILITY_ADV in list): timeout as above.
 
 **Protocol note:** Pairing packets use `hop_limit=0` — pairing is a deliberate, proximate act. You hand your device to your friend, not to the mesh. Post-pairing tracking packets use `hop_limit=3` so Alice and Bob can separate across the mesh and still exchange position updates.
 
@@ -255,13 +255,14 @@ The feature has to be invisible when not in use. A user who never activates Comp
 
 ```protobuf
 enum CompassMsgType {
-  POSITION_UPDATE = 0;   // Desire → Compass: lat/lon/time/battery
-  PAIR_REQUEST    = 1;   // Compass → Desire: initiator node ID
-  PAIR_ACCEPT     = 2;   // Desire → Compass: acceptance
-  PAIR_CONFIRM    = 3;   // Compass → Desire: handshake complete
-  PAIR_REJECT     = 4;   // Desire → Compass: rejection
-  SESSION_END     = 5;   // Either → Either: terminate session
-  CAPABILITY_ADV  = 6;   // Broadcast: "I support COMPASS_APP" (for node list filtering)
+  POSITION_UPDATE   = 0;   // Desire → Compass: lat/lon/time/battery
+  PAIR_REQUEST      = 1;   // Compass → Desire: initiator node ID
+  PAIR_ACCEPT       = 2;   // Desire → Compass: acceptance
+  PAIR_CONFIRM      = 3;   // Compass → Desire: handshake complete
+  PAIR_REJECT       = 4;   // Desire → Compass: rejection
+  SESSION_END       = 5;   // Either → Either: terminate session
+  CAPABILITY_QUERY  = 6;   // Broadcast: Alice solicits "who supports COMPASS_APP?"
+  CAPABILITY_ADV    = 7;   // Broadcast: automatic response to CAPABILITY_QUERY
 }
 
 message CompassPacket {
@@ -274,7 +275,7 @@ message CompassPacket {
 ```
 
 **Routing:**
-- `hop_limit=0` — PAIR_REQUEST, PAIR_ACCEPT, PAIR_CONFIRM, PAIR_REJECT, CAPABILITY_ADV (proximity-required; no mesh relay)
+- `hop_limit=0` — CAPABILITY_QUERY, CAPABILITY_ADV, PAIR_REQUEST, PAIR_ACCEPT, PAIR_CONFIRM, PAIR_REJECT (proximity-required; no mesh relay)
 - `hop_limit=3` — POSITION_UPDATE, SESSION_END (mesh-routed after pairing)
 
 **Update interval:** 30s default, stored in NVS, configurable via **Menu → Compass → Settings → Update Interval** (10s / 30s / 60s / 120s).
@@ -313,7 +314,7 @@ M variants/nrf52840/heltec_mesh_node_t114/variant.cpp (+TwoWire Wire1(NRF_TWIM1,
 ## 10. Decisions
 
 1. **NVS namespace:** Use `compass`. Meshtastic uses `prefs`; a dedicated namespace avoids key collisions and makes wipe/reset straightforward.
-2. **CAPABILITY_ADV timing:** Broadcast only when the user enters the pairing screen, `hop_limit=0`. Since pairing requires physical proximity, there is no need for a mesh-wide or periodic advertisement — only adjacent nodes matter. The node list is built from responses received after entering the screen.
+2. **Discovery protocol:** Split into `CAPABILITY_QUERY` (solicitation, sent by Alice on pairing screen entry) and `CAPABILITY_ADV` (automatic response, sent by any Compass-capable device that hears a query). Both `hop_limit=0`. Bob needs no user interaction to appear in Alice's list — his device responds automatically. Node list populates from responses collected over a 3-second window after query broadcast.
 3. **Stationary update suppression:** If the Desire's GPS position has not changed beyond GPS noise floor, suppress position updates for up to **5 minutes**. After 5 minutes, send an update regardless (keepalive). Resume normal 30s interval as soon as movement is detected.
 4. **Buzzer:** No buzzer support in v0.1. There is an outstanding power draw issue with the T114's buzzer circuit that must be resolved first. "Arrived at Treasure" notification is visual only (arrow replaced with `YOU'RE HERE`, display stays on).
 
