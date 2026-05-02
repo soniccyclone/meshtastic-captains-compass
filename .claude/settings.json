@@ -20,7 +20,12 @@
       "Bash(git -C /home/nathan/code-stuff/meshtastic-firmware checkout -b feature/captains-compass)",
       "Read(//home/nathan/code-stuff/meshtastic-firmware/variants/nrf52840/**)",
       "Read(//home/nathan/code-stuff/meshtastic-firmware/variants/**)",
-      "Read(//home/nathan/code-stuff/meshtastic-firmware/**)"
+      "Read(//home/nathan/code-stuff/meshtastic-firmware/**)",
+      "Bash(docker run --rm --entrypoint /bin/bash cc-builder -c ' *)",
+      "Bash(docker run *)",
+      "Bash(grep -nB2 -A12 'struct InputEvent' vendor/meshtastic-firmware/src/input/InputBroker.h)",
+      "Bash(grep -nB2 -A12 'class InputEvent\\\\|^struct InputEvent\\\\|InputEvent {' vendor/meshtastic-firmware/src/input/InputBroker.h)",
+      "Bash(grep -nB2 -A4 'class InputBroker' vendor/meshtastic-firmware/src/input/InputBroker.h)"
     ],
     "deny": [],
     "additionalDirectories": [
