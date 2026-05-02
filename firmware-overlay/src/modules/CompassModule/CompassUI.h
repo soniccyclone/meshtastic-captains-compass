@@ -40,6 +40,7 @@ private:
     void drawAwaitingPairAccept(OLEDDisplay *display, int16_t x, int16_t y);
     void drawCalibrating(OLEDDisplay *display, int16_t x, int16_t y);
     void drawSessionPaused(OLEDDisplay *display, int16_t x, int16_t y);
+    void drawStatus(OLEDDisplay *display, int16_t x, int16_t y);
 
     // Arrow rendering: center is the (x,y) origin passed in;
     // headingErrorDeg is signed (positive = clockwise).

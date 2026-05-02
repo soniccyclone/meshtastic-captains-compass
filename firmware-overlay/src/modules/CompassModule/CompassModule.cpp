@@ -17,6 +17,16 @@ CompassModule::CompassModule()
     : SinglePortModule("compass", meshtastic_PortNum_COMPASS_APP),
       concurrency::OSThread("Compass") {
     instance = this;
+
+    // Bug 2 fix (issue #9). MeshModule defaults loopbackOk=false, which
+    // causes the dispatcher in MeshModule.cpp:112-115 to early-out on
+    // any RX_SRC_LOCAL delivery — so our own outbound packets never
+    // reach our handleReceived(). For Compass we DO want to see local
+    // loopback (e.g. to confirm our own CAPABILITY_QUERY went out, and
+    // for any future use of unicast-to-self for testing). The self-guards
+    // in each handle* method below prevent infinite echoes.
+    loopbackOk = true;
+
     _state.begin();
     Magnetometer::InitResult magInit = _mag.begin();
     LOG_INFO("Captain's Compass: mag init %s",
@@ -164,13 +174,23 @@ void CompassModule::sendSessionEnd() {
 
 // --- Per-message handlers ---------------------------------------------
 
+// All handle* methods early-out on self-loopback (mp.from == ourNodeNum).
+// Necessary because we set loopbackOk=true in the constructor; without
+// these guards, our own broadcast CAPABILITY_QUERY would be re-handled
+// here as if it came from a peer, generating a CAPABILITY_ADV reply to
+// ourselves (and so on).
+static inline bool _isFromSelf(const meshtastic_MeshPacket &mp) {
+    return nodeDB && mp.from == nodeDB->getNodeNum();
+}
+
 void CompassModule::handleCapabilityQuery(const meshtastic_MeshPacket &mp) {
-    // Anyone running CompassModule responds, regardless of UI state.
+    if (_isFromSelf(mp)) return;
     sendCapabilityAdv(mp.from);
 }
 
 void CompassModule::handleCapabilityAdv(const meshtastic_MeshPacket &mp,
                                         const meshtastic_CompassPacket & /*pkt*/) {
+    if (_isFromSelf(mp)) return;
     if (!_state.isDiscoveryWindowOpen()) return;
     const meshtastic_NodeInfoLite *info = nodeDB ? nodeDB->getMeshNode(mp.from) : nullptr;
     const char *shortName = (info && info->has_user) ? info->user.short_name : "";
@@ -178,11 +198,13 @@ void CompassModule::handleCapabilityAdv(const meshtastic_MeshPacket &mp,
 }
 
 void CompassModule::handlePairRequest(const meshtastic_MeshPacket &mp) {
+    if (_isFromSelf(mp)) return;
     _state.onPairRequestReceived(mp.from);
     notifyUIChanged();
 }
 
 void CompassModule::handlePairAccept(const meshtastic_MeshPacket &mp) {
+    if (_isFromSelf(mp)) return;
     const meshtastic_NodeInfoLite *info = nodeDB ? nodeDB->getMeshNode(mp.from) : nullptr;
     const char *peerName = (info && info->has_user) ? info->user.long_name : "";
     _state.onPairAccepted(mp.from, peerName);
@@ -192,10 +214,12 @@ void CompassModule::handlePairAccept(const meshtastic_MeshPacket &mp) {
 
 void CompassModule::handlePairConfirm(const meshtastic_MeshPacket &mp) {
     // Desire side: pair handshake complete. Already in TRACKED if we acceptPair'd.
+    if (_isFromSelf(mp)) return;
     (void)mp;
 }
 
-void CompassModule::handlePairReject(const meshtastic_MeshPacket & /*mp*/) {
+void CompassModule::handlePairReject(const meshtastic_MeshPacket &mp) {
+    if (_isFromSelf(mp)) return;
     _state.onPairRejected();
     notifyUIChanged();
 }
@@ -246,6 +270,8 @@ int32_t CompassModule::runOnce() {
         case State::SESSION_PAUSED:
             return tickTracking();
         case State::TRACKING_TREASURE:
+            return 1000;
+        case State::STATUS:
             return 1000;
     }
     return 1000;

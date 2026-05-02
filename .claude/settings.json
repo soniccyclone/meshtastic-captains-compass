@@ -1,5 +1,33 @@
 {
+  "hooks": {
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "command": "bd prime",
+            "type": "command"
+          }
+        ],
+        "matcher": ""
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "bd prime",
+            "type": "command"
+          }
+        ],
+        "matcher": ""
+      }
+    ]
+  },
   "permissions": {
+    "additionalDirectories": [
+      "/home/nathan/code-stuff/meshtastic-captains-compass",
+      "/home/nathan/code-stuff/meshtastic-firmware/protobufs/meshtastic"
+    ],
     "allow": [
       "Read(*)",
       "Write(*)",
@@ -31,34 +59,6 @@
       "Bash(git commit -m ' *)",
       "Bash(git push *)"
     ],
-    "deny": [],
-    "additionalDirectories": [
-      "/home/nathan/code-stuff/meshtastic-captains-compass",
-      "/home/nathan/code-stuff/meshtastic-firmware/protobufs/meshtastic"
-    ]
-  },
-  "hooks": {
-    "PreCompact": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bd prime"
-          }
-        ]
-      }
-    ],
-    "SessionStart": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bd prime"
-          }
-        ]
-      }
-    ]
+    "deny": []
   }
 }

@@ -48,6 +48,7 @@ bool CompassUI::wantUIFrame() const {
         case State::SESSION_PAUSED:
         case State::TRACKING_TREASURE:
         case State::CALIBRATING:
+        case State::STATUS:
             return true;
         default:
             return false;
@@ -68,6 +69,7 @@ void CompassUI::drawFrame(OLEDDisplay *display, OLEDDisplayUiState * /*state*/, 
         case State::SESSION_PAUSED:     drawSessionPaused(display, x, y);      break;
         case State::TRACKING_TREASURE:  drawTrackingTreasure(display, x, y);   break;
         case State::CALIBRATING:        drawCalibrating(display, x, y);        break;
+        case State::STATUS:             drawStatus(display, x, y);             break;
         default:                                                               break;
     }
 }
@@ -204,6 +206,28 @@ void CompassUI::drawSessionPaused(OLEDDisplay *display, int16_t x, int16_t y) {
     display->drawString(x + 4, y + 50, buf);
 }
 
+void CompassUI::drawStatus(OLEDDisplay *display, int16_t x, int16_t y) {
+    auto *st = _owner->state();
+    auto *mg = _owner->mag();
+    const auto &sess = st->session();
+
+    display->setTextAlignment(TEXT_ALIGN_LEFT);
+    display->drawString(x + 4, y + 0,  "Captain's Compass");
+    display->drawString(x + 4, y + 16, mg->isReady() ? "mag: OK" : "mag: not found");
+
+    char buf[40];
+    if (sess.peerNodeNum != 0) {
+        snprintf(buf, sizeof(buf), "session: %s", sess.peerName[0] ? sess.peerName : "(peer)");
+    } else {
+        snprintf(buf, sizeof(buf), "session: (none)");
+    }
+    display->drawString(x + 4, y + 32, buf);
+    snprintf(buf, sizeof(buf), "treasures: %u", static_cast<unsigned>(st->treasureCount()));
+    display->drawString(x + 4, y + 48, buf);
+    display->drawString(x + 4, y + 64, "port: 300");
+    display->drawString(x + 4, y + 96, "(any input dismisses)");
+}
+
 // --- Arrow ------------------------------------------------------------
 
 void CompassUI::drawArrow(OLEDDisplay *display, int16_t cx, int16_t cy, float headingErrorDeg, bool dim) {
@@ -298,6 +322,16 @@ int CompassUI::handleInputEvent(const InputEvent *e) {
                 // End session and refresh frame list so screen rotation
                 // returns to its normal behavior. The "minimize but keep
                 // tracking" UX is a v2 follow-up (bead -dyg).
+                st->endSession();
+                _owner->notifyUIChanged();
+                return 1;
+            }
+            return 0;
+        }
+        case State::STATUS: {
+            // Any input dismisses the read-only status screen back to home.
+            // endSession() with no active session is just a setState(IDLE).
+            if (e->inputEvent != 0) {
                 st->endSession();
                 _owner->notifyUIChanged();
                 return 1;
