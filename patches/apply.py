@@ -128,19 +128,103 @@ def patch_portnums_proto(dry_run=False):
 
 
 def patch_modules_cpp(dry_run=False):
-    """Add CompassModule include + new CompassModule() in setupModules().
+    """Add CompassModule include + new CompassModule() in setupModules()."""
+    path = "src/modules/Modules.cpp"
+    text = _read(path)
+    if MARKER in text:
+        print(f"  Skipped {path}: already patched"); return
 
-    Implemented by BEAD-12. See TDD §15.
-    """
-    _todo("BEAD-12", "patch_modules_cpp")
+    include_anchor = '#include "modules/RoutingModule.h"'
+    setup_anchor = "void setupModules()\n{"
+    if include_anchor not in text:
+        sys.exit(f"ERROR: anchor missing in {path}: {include_anchor!r}")
+    if setup_anchor not in text:
+        sys.exit(f"ERROR: anchor missing in {path}: {setup_anchor!r}")
+    if dry_run:
+        print(f"  OK {path}: anchors present"); return
+
+    text = text.replace(
+        include_anchor,
+        include_anchor + f'\n// {MARKER}\n#include "modules/CompassModule/CompassModule.h"',
+        1,
+    )
+    # Insert the instantiation as the first statement in setupModules() so
+    # CompassModule::instance is set before any other module that might use it.
+    text = text.replace(
+        setup_anchor,
+        setup_anchor + f"\n    new CompassModule();  // {MARKER}",
+        1,
+    )
+    open(path, "w").write(text)
+    print(f"  Patched {path}")
 
 
 def patch_screen_cpp(dry_run=False):
-    """Add 'Compass' menu entry triggering startDiscovery + sendCapabilityQuery.
+    """Add 'Compass' entry to the home banner menu in MenuHandler.cpp.
 
-    Implemented by BEAD-12. See TDD §15.
+    Three coordinated substitutions in src/graphics/draw/MenuHandler.cpp:
+      1. enum optionsNumbers — add Compass before enumEnd
+      2. options array — append Compass entry after the Position branch
+      3. bannerCallback lambda — add 'else if (selected == Compass)' case
+    Plus an #include for CompassModule.h.
+
+    All four are idempotency-checked via the MARKER scan at function entry;
+    once patched, every subsequent call is a no-op.
     """
-    _todo("BEAD-12", "patch_screen_cpp")
+    path = "src/graphics/draw/MenuHandler.cpp"
+    text = _read(path)
+    if MARKER in text:
+        print(f"  Skipped {path}: already patched"); return
+
+    enum_anchor   = "enum optionsNumbers { Back, Mute, Backlight, Position, Preset, Freetext, Sleep, enumEnd };"
+    array_anchor  = "    optionsEnumArray[options++] = Position;"
+    cb_anchor     = ("        } else if (selected == Freetext) {\n"
+                     "            cannedMessageModule->LaunchFreetextWithDestination(NODENUM_BROADCAST);\n"
+                     "        }")
+    include_anchor = '#include "MenuHandler.h"'
+
+    for a in (enum_anchor, array_anchor, cb_anchor, include_anchor):
+        if a not in text:
+            sys.exit(f"ERROR: anchor missing in {path}: {a!r}")
+    if dry_run:
+        print(f"  OK {path}: anchors present"); return
+
+    # 1. enum: insert Compass before enumEnd
+    enum_replacement = enum_anchor.replace(
+        "Sleep, enumEnd",
+        f"Sleep, Compass, enumEnd  /* {MARKER} */",
+    )
+    text = text.replace(enum_anchor, enum_replacement, 1)
+
+    # 2. options array: append after Position branch
+    array_replacement = (
+        array_anchor + "\n"
+        f"    // {MARKER}\n"
+        '    optionsArray[options] = "Compass";\n'
+        "    optionsEnumArray[options++] = Compass;"
+    )
+    text = text.replace(array_anchor, array_replacement, 1)
+
+    # 3. bannerCallback lambda: add Compass case after Freetext
+    cb_replacement = (
+        cb_anchor + " "
+        f"/* {MARKER} */ else if (selected == Compass) {{\n"
+        "            if (CompassModule::instance) {\n"
+        "                CompassModule::instance->sendCapabilityQuery();\n"
+        "            }\n"
+        "        }"
+    )
+    text = text.replace(cb_anchor, cb_replacement, 1)
+
+    # 4. include
+    include_replacement = (
+        include_anchor + f'\n// {MARKER}\n'
+        '#include "modules/CompassModule/CompassModule.h"'
+    )
+    text = text.replace(include_anchor, include_replacement, 1)
+
+    open(path, "w").write(text)
+    print(f"  Patched {path}")
 
 
 # ---------------------------------------------------------------------------

@@ -1132,27 +1132,25 @@ Long-press threshold: 800ms. Track `pressStartMs` on key-down event; evaluate du
 
 Two upstream files. Both edits are applied by `apply.py`.
 
-**File 1:** `src/modules/Modules.cpp` — two lines:
+**File 1:** `src/modules/Modules.cpp` — two insertions, both in `patch_modules_cpp`:
 
-```cpp
-#include "modules/CompassModule/CompassModule.h"   // captains-compass:
-// in setupModules():
-new CompassModule();                                 // captains-compass:
-```
+- `#include "modules/CompassModule/CompassModule.h"` — anchored after `#include "modules/RoutingModule.h"` (a stable, unconditional include).
+- `new CompassModule();` — anchored at the opening of `void setupModules() {`, inserted as the first statement so `CompassModule::instance` is set before any other module that might use it.
 
 The constructor registers the module with the `SinglePortModule` dispatcher and the `OSThread` scheduler. No other changes needed.
 
-**File 2:** `src/graphics/Screen.cpp` — one menu entry. Follow the pattern of whichever existing module adds a menu entry most recently — copy its exact registration approach. The entry triggers:
+**File 2:** `src/graphics/draw/MenuHandler.cpp` — four coordinated insertions, all in `patch_screen_cpp` (kept named `screen_cpp` for historical continuity with the v0.1 TDD; the actual file is `MenuHandler.cpp`).
 
-```cpp
-CompassModule::instance->state()->startDiscovery();
-CompassModule::instance->sendCapabilityQuery();
-screen->setFrames();
-```
+The entry attaches to the existing **home banner menu** (`menuHandler::homeBaseMenu()`), which is the popup overlay triggered by the home button. Adding "Compass" requires:
 
-Label: `"Compass"`. Anchor for the patch is the existing module's menu-entry registration line; insert ours directly after it.
+1. **Enum:** `enum optionsNumbers { Back, Mute, Backlight, Position, Preset, Freetext, Sleep, enumEnd };` → insert `Compass,` before `enumEnd`.
+2. **Options array:** after the `Position` branch's `optionsEnumArray[options++] = Position;` line, append `optionsArray[options] = "Compass"; optionsEnumArray[options++] = Compass;`.
+3. **Banner callback:** after the `} else if (selected == Freetext) { ... }` arm, add `else if (selected == Compass) { CompassModule::instance->sendCapabilityQuery(); }`.
+4. **Include:** after `#include "MenuHandler.h"`, add `#include "modules/CompassModule/CompassModule.h"`.
 
-The rest of the Compass sub-menu (Save Treasure, Treasures list, End Session, Settings, Status/calibrate) lives entirely within `CompassUI::drawFrame` state transitions — not as separate `Screen.cpp` entries.
+`sendCapabilityQuery()` calls `_state.startDiscovery()` internally and broadcasts the query. The CompassModule's `wantUIFrame()` returns true while in DISCOVERING, which causes the screen rotation to render the discovery frame on the next refresh. No explicit `setFrames()` call is needed — the screen framework polls `wantUIFrame()` per frame.
+
+The rest of the Compass sub-menu (Save Treasure, Treasures list, End Session, Settings, Status/calibrate) lives entirely within `CompassUI::drawFrame` state transitions — not as separate menu entries.
 
 ---
 
@@ -1301,7 +1299,7 @@ The build infrastructure (BEAD-1 through BEAD-4) ships *before any C++ is writte
 - Spot-check on host (small ad-hoc test program if convenient):
   - `bearing(0, 0, 1e7, 0)` ≈ 0° (due north)
   - `bearing(0, 0, 0, 1e7)` ≈ 90° (due east)
-  - `distanceMeters(0, 0, 0, 1e7)` ≈ 1111950m
+  - `distanceMeters(0, 0, 0, 1e7)` ≈ 111195m (1° longitude at equator)
   - `headingError(350, 10)` ≈ 20°
   - `headingError(10, 350)` ≈ -20°
 
