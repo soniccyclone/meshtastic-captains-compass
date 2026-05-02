@@ -2,6 +2,7 @@
   "permissions": {
     "allow": [
       "Read(*)",
+      "Write(*)",
       "Edit(*)",
       "WebFetch(*)",
       "WebSearch(*)",
@@ -13,11 +14,18 @@
       "Bash(podman run *)",
       "Bash(podman logs *)",
       "Bash(podman inspect *)",
-      "Bash(bd *)"
+      "Bash(bd *)",
+      "Bash(git -C /home/nathan/code-stuff/meshtastic-firmware branch)",
+      "Bash(git -C /home/nathan/code-stuff/meshtastic-firmware log --oneline -8)",
+      "Bash(git -C /home/nathan/code-stuff/meshtastic-firmware checkout -b feature/captains-compass)",
+      "Read(//home/nathan/code-stuff/meshtastic-firmware/variants/nrf52840/**)",
+      "Read(//home/nathan/code-stuff/meshtastic-firmware/variants/**)",
+      "Read(//home/nathan/code-stuff/meshtastic-firmware/**)"
     ],
     "deny": [],
     "additionalDirectories": [
-      "/home/nathan/code-stuff/meshtastic-captains-compass"
+      "/home/nathan/code-stuff/meshtastic-captains-compass",
+      "/home/nathan/code-stuff/meshtastic-firmware/protobufs/meshtastic"
     ]
   },
   "hooks": {
