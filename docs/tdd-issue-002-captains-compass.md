@@ -1,12 +1,24 @@
 # Captain's Compass — Technical Design Document
 **Issue:** #2
-**Version:** 0.1
+**Version:** 0.2
 **PRD:** [prd-issue-002-captains-compass.md](prd-issue-002-captains-compass.md)
-**Target:** Meshtastic `develop` branch, variant `heltec_mesh_node_t114`
+**Target:** Meshtastic firmware pinned at the SHA in `meshtastic-firmware-pin`, variant `heltec_mesh_node_t114`.
+
+---
+
+## 0. v0.2 Changelog
+
+v0.1 of this doc described files at upstream firmware paths (`src/modules/CompassModule/...`, `variants/nrf52840/heltec_mesh_node_t114/...`, `protobufs/meshtastic/...`) without specifying how this repo physically relates to the upstream firmware tree. An agent implementing v0.1 sensibly inferred that the work happens *inside* the firmware checkout, cloned `meshtastic/firmware` somewhere, edited it in place, and reported success — at which point the work evaporated when the clone was discarded. Eight beads closed; zero source files in this repo.
+
+v0.2 reframes the project as a **patch overlay against a pinned upstream SHA**, with a containerized build pipeline that turns this repo plus a pinned firmware checkout into a flashable UF2. The functional design (the protocol, the FSM, the math, the UI) is unchanged from v0.1 and lives in sections 8–14 below; the new sections 2–7 describe the delivery mechanism that v0.1 was missing.
+
+Prior art for this approach: [soniccyclone/Meshtastic-Firmware-Friend-Finder-Edition](https://github.com/soniccyclone/Meshtastic-Firmware-Friend-Finder-Edition). We borrow its Python anchor-substitution patcher, multi-stage Docker layout, and three-workflow CI shape, with two changes: (1) a pinned upstream SHA instead of an unpinned `--depth=1` clone, and (2) a `firmware-overlay/` tree for whole new files — soniccyclone only needed in-place edits.
 
 ---
 
 ## 1. Architecture Overview
+
+### Module-level (unchanged from v0.1)
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -44,7 +56,24 @@
     └───────────────┘
 ```
 
-**Read these Meshtastic source files before implementing any bead:**
+### Repo-level
+
+Two repos in play, related by overlay-and-patch:
+
+```
+meshtastic-captains-compass/   (this repo)         meshtastic/firmware     (upstream)
+├── firmware-overlay/          ───  rsync  ───►   src/modules/CompassModule/...
+│                                                  protobufs/meshtastic/compass.proto
+├── patches/apply.py           ───  edits  ───►   variants/.../variant.{h,cpp}
+│                                                  protobufs/meshtastic/portnums.proto
+│                                                  src/modules/Modules.cpp
+│                                                  src/graphics/Screen.cpp
+└── meshtastic-firmware-pin    ───  pins  ────►   <full SHA on develop>
+```
+
+The build pipeline (section 4) shallow-clones upstream at the pinned SHA into a working copy, rsyncs the overlay over it, runs the patcher, and invokes PlatformIO. The output is a `firmware.uf2` for `heltec_mesh_node_t114` containing all stock Meshtastic functionality plus the Captain's Compass module.
+
+**Read these upstream Meshtastic source files before implementing any module-level bead.** All paths are relative to `vendor/meshtastic-firmware/` after `make setup` (section 4.1):
 - `src/mesh/MeshModule.h` — base class interface, `wantUIFrame`, `drawFrame`, `interceptingKeyboardInput`, `handleInputEvent`
 - `src/mesh/SinglePortModule.h` — packet handling base, `handleReceived`, `allocDataPacket`
 - `src/concurrency/OSThread.h` — cooperative scheduler, `runOnce` return semantics
@@ -53,54 +82,464 @@
 - `src/NodeDB.h` — `nodeDB->getNodeByNum`, `getNode`, `getMyNodeNum`
 - `src/mesh/generated/meshtastic/portnum.pb.h` — existing PortNum enum, find the private app range
 - `variants/nrf52840/heltec_mesh_node_t114/variant.h` — current GPIO assignments, WIRE defines
-- `variants/nrf52840/heltec_mesh_node_t114/variant.cpp` — Wire0 instantiation pattern to copy for Wire1
-- Any existing module that uses NVS (e.g., `src/modules/StoreForwardModule.cpp`) — `Preferences` usage pattern
+- `variants/nrf52840/heltec_mesh_node_t114/variant.cpp` — Wire0 instantiation pattern; check whether the BSP auto-creates Wire1 from `PIN_WIRE1_*` defines
+- An existing module that uses NVS (e.g., `src/modules/StoreForwardModule.cpp`) — `Preferences` usage pattern
+- An existing module that adds a Screen menu entry — find the most recent example and copy its registration shape
 
 ---
 
-## 2. Build System
+## 2. Repository Layout
 
-No new PlatformIO lib dependencies. The QMC5883L is driven directly over Wire1 — no third-party driver library. nanopb is already in the build; compass.proto follows the existing pattern.
+```
+meshtastic-captains-compass/
+├── meshtastic-firmware-pin              # one line: 40-char upstream SHA
+├── firmware-overlay/                    # NEW files; mirrored at firmware paths
+│   ├── protobufs/meshtastic/
+│   │   └── compass.proto
+│   └── src/modules/CompassModule/
+│       ├── CompassMath.{h,cpp}
+│       ├── CompassModule.{h,cpp}
+│       ├── CompassState.{h,cpp}
+│       ├── CompassUI.{h,cpp}
+│       └── Magnetometer.{h,cpp}
+├── patches/
+│   └── apply.py                         # anchor-substitution patcher
+├── docker/
+│   ├── Dockerfile                       # multi-stage T114 builder
+│   └── entrypoint.sh
+├── .github/workflows/
+│   ├── pr-build-t114.yml
+│   ├── release.yml
+│   └── upstream-drift.yml
+├── vendor/                              # gitignored — populated by `make setup`
+│   └── meshtastic-firmware/             # shallow clone at pinned SHA
+├── output/                              # gitignored — build artifacts
+├── docs/
+│   ├── prd-issue-002-captains-compass.md
+│   └── tdd-issue-002-captains-compass.md
+├── Makefile
+├── build.sh
+├── .gitignore                           # adds vendor/, output/
+├── .beads/
+├── .claude/
+├── AGENTS.md
+├── CLAUDE.md
+└── LICENSE
+```
 
-The build system auto-generates nanopb from `.proto` files via `bin/generate-proto.sh`. After adding `compass.proto`, run that script once to produce:
+`vendor/` exists for one purpose: so Claude Code, IDEs, language servers, and humans can read the pinned upstream source while developing patches. It is never committed (`.gitignore` excludes the whole directory). The CI build pipeline does *not* depend on `vendor/`; it shallow-fetches inside the Docker image at the same pinned SHA. The host `vendor/` and the container `/firmware-src` are two materializations of the same content.
+
+---
+
+## 3. Pin File
+
+A single file at the repo root, `meshtastic-firmware-pin`, contains exactly one line: the 40-character upstream SHA. No surrounding whitespace, no trailing newline beyond the standard.
+
+Every component reads from this file:
+
+- `make setup` checks out this SHA in `vendor/meshtastic-firmware/`
+- `make build` passes it as `--build-arg FIRMWARE_SHA=...` to docker
+- `release.yml` and `pr-build-t114.yml` do the same
+- `upstream-drift.yml` compares it to upstream `develop` HEAD weekly and proposes a bump
+
+Bumping the pin is a one-line commit. The pin tracks `meshtastic/firmware` `develop` HEAD at known-tested points; bumps go through the drift workflow (section 5.3) so each bump is gated on the patcher still applying cleanly and the firmware still building.
+
+The pin is the single source of truth for "which upstream did this code work against." When something breaks in the field, the SHA in this file is what reproduces the build that produced the failing UF2.
+
+---
+
+## 4. Build Pipeline
+
+### 4.1 Makefile
+
+```make
+FIRMWARE_SHA := $(shell cat meshtastic-firmware-pin 2>/dev/null)
+FIRMWARE_DIR := vendor/meshtastic-firmware
+IMAGE        := cc-builder
+OUTPUT_DIR   := $(CURDIR)/output
+
+.PHONY: help setup build shell clean bump-pin
+
+help:
+	@echo "Captain's Compass — build pipeline"
+	@echo
+	@echo "Targets:"
+	@echo "  setup     — shallow-clone meshtastic/firmware into $(FIRMWARE_DIR) at pinned SHA"
+	@echo "  build     — build $(IMAGE) docker image and emit output/firmware.uf2"
+	@echo "  shell     — drop into a shell inside the builder image"
+	@echo "  clean     — remove output/"
+	@echo "  bump-pin  — write SHA=<sha> to meshtastic-firmware-pin and re-setup"
+	@echo
+	@echo "FIRMWARE_SHA = $(FIRMWARE_SHA)"
+
+setup:
+	@test -n "$(FIRMWARE_SHA)" || ( echo "meshtastic-firmware-pin missing or empty" && exit 1 )
+	@if [ ! -d $(FIRMWARE_DIR)/.git ]; then \
+	  mkdir -p $(FIRMWARE_DIR); \
+	  cd $(FIRMWARE_DIR) && \
+	    git init -q && \
+	    git remote add origin https://github.com/meshtastic/firmware.git; \
+	fi
+	cd $(FIRMWARE_DIR) && \
+	  git fetch --depth=1 origin $(FIRMWARE_SHA) && \
+	  git checkout -q FETCH_HEAD && \
+	  git submodule update --init --recursive --depth=1
+
+build:
+	@test -n "$(FIRMWARE_SHA)" || ( echo "meshtastic-firmware-pin missing or empty" && exit 1 )
+	docker build --build-arg FIRMWARE_SHA=$(FIRMWARE_SHA) -t $(IMAGE) -f docker/Dockerfile .
+	@mkdir -p $(OUTPUT_DIR)
+	docker run --rm -v "$(OUTPUT_DIR):/output" $(IMAGE)
+	@echo "Artifact: $(OUTPUT_DIR)/firmware.uf2"
+
+shell:
+	docker run --rm -it --entrypoint /bin/bash -v "$(OUTPUT_DIR):/output" $(IMAGE)
+
+clean:
+	rm -rf $(OUTPUT_DIR)
+
+bump-pin:
+	@test -n "$(SHA)" || ( echo "usage: make bump-pin SHA=<full-sha>" && exit 1 )
+	@printf "%s\n" "$(SHA)" > meshtastic-firmware-pin
+	@$(MAKE) setup
+```
+
+GitHub's `uploadpack.allowReachableSHA1InWant` is enabled, so `git fetch --depth=1 origin <sha>` works against any reachable commit without first knowing the branch. That keeps `setup` independent of upstream branch renames.
+
+### 4.2 Dockerfile (multi-stage)
+
+`docker/Dockerfile`:
+
+```dockerfile
+# Stage 1: toolchain — apt + python venv + platformio. Invalidates rarely.
+FROM ubuntu:24.04 AS toolchain
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PATH="/opt/pio-venv/bin:${PATH}"
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      git python3 python3-pip python3-venv ca-certificates curl \
+      libusb-1.0-0 rsync \
+ && rm -rf /var/lib/apt/lists/*
+RUN python3 -m venv /opt/pio-venv \
+ && /opt/pio-venv/bin/pip install --upgrade pip platformio
+
+# Stage 2: pinned firmware — clone + checkout SHA + install pio platform.
+# Invalidates ONLY when FIRMWARE_SHA changes.
+FROM toolchain AS firmware
+ARG FIRMWARE_SHA
+RUN test -n "${FIRMWARE_SHA}" || ( echo "FIRMWARE_SHA build-arg required" && exit 1 )
+RUN mkdir -p /firmware-src \
+ && cd /firmware-src \
+ && git init -q \
+ && git remote add origin https://github.com/meshtastic/firmware.git \
+ && git fetch --depth=1 origin ${FIRMWARE_SHA} \
+ && git checkout -q FETCH_HEAD \
+ && git submodule update --init --recursive --depth=1 \
+ && pio pkg install --environment heltec_mesh_node_t114
+
+# Stage 3: builder — overlay + patcher + entrypoint.
+# Invalidates on every iteration of our patches.
+FROM firmware AS builder
+COPY firmware-overlay/         /overlay/
+COPY patches/                  /patches/
+COPY docker/entrypoint.sh      /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+WORKDIR /firmware-src
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+```
+
+Layer-cache cost model:
+
+| Change                                       | Stages invalidated | Cold time  |
+|----------------------------------------------|--------------------|------------|
+| Edit a file in `firmware-overlay/` or `patches/` | 3 only         | ~5 s + pio rebuild |
+| Bump `meshtastic-firmware-pin`               | 2 + 3              | ~5 min     |
+| Edit `docker/Dockerfile` toolchain stage     | 1 + 2 + 3          | ~10 min    |
+
+In CI, `docker/build-push-action@v6` with `cache-from: type=gha, cache-to: type=gha, mode=max` makes stage 2 free across runs that don't bump the pin.
+
+### 4.3 entrypoint.sh
+
+`docker/entrypoint.sh`:
+
+```bash
+#!/bin/bash
+# Build entrypoint: reset the firmware tree, apply our overlay + patches,
+# regenerate nanopb, run pio, emit firmware.uf2.
+set -euo pipefail
+cd /firmware-src
+
+echo "=== Reset firmware tree ==="
+git reset --hard HEAD
+git clean -fdx -e .pio   # keep pio build cache; drop everything else
+
+echo "=== Apply overlay (new files) ==="
+rsync -a /overlay/ /firmware-src/
+
+echo "=== Apply patches (modifications) ==="
+python3 /patches/apply.py
+
+echo "=== Regenerate nanopb ==="
+# Confirm exact upstream script name in BEAD-2; current candidates:
+#   bin/regen-protos.sh   bin/build-all.sh   bin/generate-proto.sh
+bin/regen-protos.sh
+
+echo "=== Build heltec_mesh_node_t114 ==="
+pio run --environment heltec_mesh_node_t114
+
+echo "=== Emit artifact ==="
+mkdir -p /output
+cp .pio/build/heltec_mesh_node_t114/firmware.uf2 /output/firmware.uf2
+echo "Done: /output/firmware.uf2"
+```
+
+The `git reset --hard HEAD` + `git clean -fdx -e .pio` combination is what makes builds idempotent. Any partial overlay or patcher state from a previous run is discarded before re-applying. The `.pio` directory is preserved so the build cache survives.
+
+### 4.4 build.sh (local convenience)
+
+`build.sh` is a thin wrapper for users who want to bypass `make`:
+
+```bash
+#!/bin/bash
+set -euo pipefail
+cd "$(dirname "$0")"
+exec make build
+```
+
+---
+
+## 5. CI Workflows
+
+Three workflows, each with a single job. All run on `ubuntu-latest`. Verification criterion in all cases: `pio run` exits 0 and a `firmware.uf2` lands in `/output`. No checksum or reproducibility checks beyond that.
+
+### 5.1 release.yml — push to main
+
+`.github/workflows/release.yml`:
+
+- Triggers: `push` to `main`.
+- Concurrency group: `release`, `cancel-in-progress: false` (don't drop in-flight releases).
+- Permissions: `contents: write`.
+- Steps:
+  1. `actions/checkout@v4`.
+  2. Read `meshtastic-firmware-pin` into `FIRMWARE_SHA` env var.
+  3. Compute CalVer tag: `v$(date -u +%Y.%m.%d)-${GITHUB_RUN_NUMBER}`.
+  4. `docker/build-push-action@v6` with `--build-arg FIRMWARE_SHA=$FIRMWARE_SHA`, `cache-from: type=gha`, `cache-to: type=gha,mode=max`, `load: true`, `tags: cc-builder:release`.
+  5. `docker run --rm -v "$PWD/output:/output" cc-builder:release`.
+  6. `softprops/action-gh-release@v2` with `tag_name`, `prerelease: true`, `generate_release_notes: true`, `files: output/firmware.uf2`. Body template includes UF2 flash instructions for the T114 (double-press reset → drag-drop onto `T114_BOOT`).
+
+### 5.2 pr-build-t114.yml — per-PR builds
+
+- Triggers: `pull_request` `opened`, `synchronize`, `reopened`, with `paths` filter:
+  ```yaml
+  - 'firmware-overlay/**'
+  - 'patches/**'
+  - 'docker/**'
+  - 'meshtastic-firmware-pin'
+  - '.github/workflows/pr-build-t114.yml'
+  ```
+- Concurrency group: `pr-build-t114-${{ github.event.pull_request.number }}`, `cancel-in-progress: true`.
+- Permissions: `contents: write`, `pull-requests: write`.
+- Steps 1–5: same as release.yml.
+- Step 6: `softprops/action-gh-release@v2` with `tag_name: v<date>-pr<num>.<run>`, `prerelease: true`, `target_commitish: ${{ github.event.pull_request.head.sha }}`.
+- Step 7: `actions/github-script@v7` posts a PR comment with the release URL and flash instructions.
+
+### 5.3 upstream-drift.yml — weekly drift detection
+
+- Triggers: `schedule: cron: '0 6 * * 1'` (Monday 06:00 UTC) + `workflow_dispatch`.
+- Permissions: `contents: write`, `pull-requests: write`, `issues: write`.
+- Steps:
+  1. `actions/checkout@v4`.
+  2. Read pinned SHA.
+  3. `git ls-remote https://github.com/meshtastic/firmware.git refs/heads/develop` → `LATEST_SHA`.
+  4. If `LATEST_SHA == FIRMWARE_SHA`: exit 0, no work.
+  5. `docker build --build-arg FIRMWARE_SHA=$LATEST_SHA -t cc-builder-drift -f docker/Dockerfile .`.
+  6. `docker run --rm cc-builder-drift python3 /patches/apply.py --dry-run` (the `--dry-run` mode of `apply.py`, section 6.2, checks anchor presence without writing).
+  7. If dry-run succeeds and a full `pio run` also succeeds: write `LATEST_SHA` to `meshtastic-firmware-pin`, commit on a branch, push, open PR titled `chore: bump firmware pin to <sha7>`.
+  8. If dry-run fails: parse `apply.py` stderr for missing-anchor lines, open issue tagged `upstream-drift` listing each failed `(file, anchor)` pair.
+
+The drift workflow is the load-bearing safety net for "upstream moved under us." Without it, drift is discovered when a human flashes a build and something breaks.
+
+---
+
+## 6. Patch System
+
+### 6.1 Two patch shapes
+
+Our changes against upstream split cleanly into two categories:
+
+**Overlay (10 new files)** — files that don't exist upstream and are entirely ours. They live at their final firmware paths under `firmware-overlay/`. The entrypoint runs `rsync -a /overlay/ /firmware-src/`, which copies them in place.
+
+```
+firmware-overlay/protobufs/meshtastic/compass.proto
+firmware-overlay/src/modules/CompassModule/CompassMath.h
+firmware-overlay/src/modules/CompassModule/CompassMath.cpp
+firmware-overlay/src/modules/CompassModule/CompassModule.h
+firmware-overlay/src/modules/CompassModule/CompassModule.cpp
+firmware-overlay/src/modules/CompassModule/CompassState.h
+firmware-overlay/src/modules/CompassModule/CompassState.cpp
+firmware-overlay/src/modules/CompassModule/CompassUI.h
+firmware-overlay/src/modules/CompassModule/CompassUI.cpp
+firmware-overlay/src/modules/CompassModule/Magnetometer.h
+firmware-overlay/src/modules/CompassModule/Magnetometer.cpp
+```
+
+**Patches (5 modified files)** — small textual edits to existing upstream files, applied by `patches/apply.py` as anchor-string substitutions:
+
+| Upstream path                                              | Edit                                  |
+|------------------------------------------------------------|---------------------------------------|
+| `variants/nrf52840/heltec_mesh_node_t114/variant.h`        | Add 4 `#define`s for MAG pins + WIRE1 |
+| `variants/nrf52840/heltec_mesh_node_t114/variant.cpp`      | Add `TwoWire Wire1(...)` *if BSP doesn't auto-create from `PIN_WIRE1_*`* — verify in BEAD-5 |
+| `protobufs/meshtastic/portnums.proto`                      | Add `COMPASS_APP = 300;`              |
+| `src/modules/Modules.cpp`                                  | `#include` + `new CompassModule();`   |
+| `src/graphics/Screen.cpp`                                  | One menu entry                        |
+
+### 6.2 apply.py contract
+
+Single file at `patches/apply.py`. One function per patched upstream file. Each function obeys the same contract:
+
+1. Open the file at its upstream path (cwd is `/firmware-src` in container, `vendor/meshtastic-firmware/` for local dry-runs).
+2. Check for the idempotency `MARKER` string (`captains-compass:`). If present, print `Skipped <path>: already patched` and return. Re-running `apply.py` on an already-patched tree is a no-op.
+3. Search for the anchor string. If absent, call `sys.exit(f"ERROR: anchor missing in {path}: {anchor!r}")`. This loud failure is the upstream-drift detection mechanism.
+4. Construct the replacement string. Every replacement contains the `MARKER` so the next run is a no-op.
+5. Write the file.
+
+Skeleton:
+
+```python
+#!/usr/bin/env python3
+"""Apply Captain's Compass patches to a pristine meshtastic/firmware checkout.
+
+Run from the firmware source root (cwd). Idempotent — re-running on an
+already-patched tree is a no-op. Each patch fails loudly if its upstream
+anchor has moved; that is the signal to update the anchor in this file.
+
+Usage:
+  python3 apply.py            # apply all patches; non-zero exit on missing anchor
+  python3 apply.py --dry-run  # check anchors only, exit 0 if all match
+"""
+import sys
+
+MARKER = "captains-compass:"
+
+# --- One function per patched file ---------------------------------------
+
+def patch_variant_h(dry_run=False):
+    path = "variants/nrf52840/heltec_mesh_node_t114/variant.h"
+    text = open(path).read()
+    if MARKER in text:
+        print(f"Skipped {path}: already patched"); return
+    anchor = "<TBD: choose during BEAD-5>"
+    if anchor not in text:
+        sys.exit(f"ERROR: anchor missing in {path}: {anchor!r}")
+    if dry_run:
+        print(f"OK {path}"); return
+    insertion = (
+        f"// {MARKER} external QMC5883L on TWI1\n"
+        "#define MAG_SDA              (13)\n"
+        "#define MAG_SCL              (16)\n"
+        "#define WIRE_INTERFACES_COUNT  2\n"
+        "#define WIRE1_INTERFACES_COUNT 1\n"
+        "#define PIN_WIRE1_SDA        MAG_SDA\n"
+        "#define PIN_WIRE1_SCL        MAG_SCL\n\n"
+    )
+    text = text.replace(anchor, insertion + anchor, 1)
+    open(path, "w").write(text)
+    print(f"Patched {path}")
+
+# patch_variant_cpp, patch_portnums_proto, patch_modules_cpp, patch_screen_cpp
+# follow the same shape.
+
+# --- Main ----------------------------------------------------------------
+
+PATCHES = [
+    patch_variant_h,
+    patch_variant_cpp,
+    patch_portnums_proto,
+    patch_modules_cpp,
+    patch_screen_cpp,
+]
+
+def main():
+    dry_run = "--dry-run" in sys.argv
+    for p in PATCHES:
+        p(dry_run=dry_run)
+
+if __name__ == "__main__":
+    main()
+```
+
+### 6.3 Anchor strings (finalized during implementation)
+
+Anchor strings cannot be finalized in this doc; they require reading the upstream files in `vendor/meshtastic-firmware/`. Each implementation bead for a patched file (BEAD-5 through BEAD-12 below) instructs the implementer to:
+
+1. Run `make setup` to populate `vendor/`.
+2. Read the target upstream file.
+3. Choose an anchor string that is (a) **unique** in the file, (b) **stable** across plausible upstream churn (prefer a function signature, a `// region` comment, or a section header over a single line of code).
+4. Write the patch function in `apply.py`.
+5. Run `make build` end-to-end and verify the resulting UF2 boots.
+
+For each patched file, the bead description lists the *expected* anchor location and the *expected* insertion content; the implementer's job is to find the exact string in the upstream file and confirm it survives the next two upstream commits.
+
+### 6.4 Why anchor substitution rather than `git apply`
+
+Anchor substitution tolerates cosmetic upstream churn that breaks unified diffs:
+- A neighbouring comment edit doesn't affect a function-signature anchor.
+- Whitespace normalization (tabs↔spaces, trailing space) can be folded into the anchor match.
+- When an anchor *does* move, the failure mode is `sys.exit("ERROR: anchor missing in X: 'foo'")` — the implementer immediately knows what to look for.
+
+`git apply` either fuzzes silently (succeeds with a wrong placement) or rejects with diff context that takes minutes to decode. For a long-lived patch series against a moving upstream, that's the wrong failure mode.
+
+---
+
+## 7. Build System Notes (PlatformIO + nanopb)
+
+No new PlatformIO `lib_deps`. The QMC5883L is driven directly over `Wire1` — no third-party driver library. nanopb is already in the build; `compass.proto` follows the existing pattern.
+
+The build system auto-generates nanopb from `.proto` files via the upstream regeneration script (confirm exact filename in BEAD-4: `bin/regen-protos.sh` is the candidate from prior reading; alternates are `bin/build-all.sh` or `bin/generate-proto.sh`). After the overlay copies `compass.proto` into place and the patcher adds `COMPASS_APP = 300;` to `portnums.proto`, the entrypoint runs the regeneration script to produce:
+
 ```
 src/mesh/generated/meshtastic/compass.pb.h
 src/mesh/generated/meshtastic/compass.pb.c
 ```
-These generated files are committed to the repo (same as all other generated protobufs).
+
+These generated files are produced fresh in every container run; they are *not* checked into our overlay. (Upstream commits its own generated proto files; ours are produced by the same script the upstream build expects to run during dev.)
 
 ---
 
-## 3. Variant Patch
+## 8. Variant Patch
 
-**File:** `variants/nrf52840/heltec_mesh_node_t114/variant.h`
+Two upstream files. Both edits are applied by `apply.py`.
 
-Add after the existing GPIO defines block:
+**File 1:** `variants/nrf52840/heltec_mesh_node_t114/variant.h`
+
+Insert the following block at an anchor near the existing GPIO-defines section (final anchor chosen in BEAD-5):
+
 ```c
-// Captain's Compass — external QMC5883L magnetometer on TWI1
-#define MAG_SDA             (13)   // P0.13
-#define MAG_SCL             (16)   // P0.16
+// captains-compass: external QMC5883L magnetometer on TWI1
+#define MAG_SDA                (13)   // P0.13
+#define MAG_SCL                (16)   // P0.16
 #define WIRE_INTERFACES_COUNT    2
 #define WIRE1_INTERFACES_COUNT   1
-#define PIN_WIRE1_SDA       MAG_SDA
-#define PIN_WIRE1_SCL       MAG_SCL
+#define PIN_WIRE1_SDA          MAG_SDA
+#define PIN_WIRE1_SCL          MAG_SCL
 ```
 
-**File:** `variants/nrf52840/heltec_mesh_node_t114/variant.cpp`
+**File 2 (conditional):** `variants/nrf52840/heltec_mesh_node_t114/variant.cpp`
 
-Add after the existing `TwoWire Wire(NRF_TWIM0, ...)` line, copying its exact pattern but using TWI1 peripherals:
+The Adafruit nRF52 BSP *may* auto-create `Wire1` when `PIN_WIRE1_SDA` / `PIN_WIRE1_SCL` are defined and `WIRE_INTERFACES_COUNT == 2`. **Verify before patching:** read `variant.cpp` and check whether other nRF52 variants with `WIRE_INTERFACES_COUNT=2` instantiate Wire1 manually or rely on the BSP. If manual instantiation is needed, append:
+
 ```c
+// captains-compass: explicit Wire1 instantiation
 TwoWire Wire1(NRF_TWIM1, NRF_TWIS1, SPIM1_SPIS1_TWIM1_TWIS1_SPI1_TWI1_IRQn,
               PIN_WIRE1_SDA, PIN_WIRE1_SCL);
 ```
 
-**Verification:** After this patch, `Wire1.begin()` must return without error and `Wire1.beginTransmission(0x0D)` / `Wire1.endTransmission()` must return 0 (ACK) when the QMC5883L is wired. Confirm SPIM1 is not claimed elsewhere in the T114 variant before merging.
+**Verification after both edits:** firmware compiles for `heltec_mesh_node_t114`. `Wire1.begin()` returns without error. `Wire1.beginTransmission(0x0D)` / `Wire1.endTransmission()` returns 0 (ACK) when QMC5883L is wired.
 
 ---
 
-## 4. Protobuf Definition
+## 9. Protobuf Definition
 
-**File:** `protobufs/meshtastic/compass.proto`
+**Overlay file:** `firmware-overlay/protobufs/meshtastic/compass.proto`
 
 ```protobuf
 syntax = "proto3";
@@ -128,15 +567,15 @@ message CompassPacket {
 }
 ```
 
-**Port number:** Add `COMPASS_APP = 300;` to `meshtastic_PortNum` in `protobufs/meshtastic/portnums.proto`. Value 300 is in the private-app reserved range (256–511). Verify it is not already taken before committing.
+**Patch:** add `COMPASS_APP = 300;` to `meshtastic_PortNum` in `protobufs/meshtastic/portnums.proto`. Value 300 is in the private-app reserved range (256–511); verify it is not already taken before committing.
 
-**Integration:** `compass.pb.h` / `compass.pb.c` are generated via nanopb. Include `compass.pb.h` in `CompassModule.h`. The nanopb encode/decode calls follow the exact same pattern used in any existing SinglePortModule — read one for reference before writing any encode/decode code.
+The nanopb-generated `compass.pb.h` / `compass.pb.c` are produced by the entrypoint's regeneration step (section 7), not committed to the overlay. Include `compass.pb.h` in `CompassModule.h`. The encode/decode calls follow the exact pattern used in any existing `SinglePortModule` — read one for reference before writing any encode/decode code.
 
 ---
 
-## 5. Magnetometer Driver
+## 10. Magnetometer Driver
 
-**Files:** `src/modules/CompassModule/Magnetometer.h`, `Magnetometer.cpp`
+**Overlay files:** `firmware-overlay/src/modules/CompassModule/Magnetometer.{h,cpp}`
 
 ### QMC5883L Register Map
 
@@ -174,7 +613,7 @@ public:
     void  getCalibration(int16_t &ox, int16_t &oy, int16_t &oz) const;
 
 private:
-    static constexpr uint8_t  I2C_ADDR   = 0x0D;
+    static constexpr uint8_t  I2C_ADDR    = 0x0D;
     static constexpr uint8_t  CHIP_ID_VAL = 0xFF;
     static constexpr uint16_t DRDY_TIMEOUT_MS = 10;
 
@@ -223,13 +662,13 @@ heading():
   return h
 ```
 
-**Note on magnetic declination:** Not corrected in v0.1. The heading is magnetic north, not true north. The bearing-to-target is computed from GPS coordinates (true north). For short-range tracking (< 1 km) at most latitudes this error is small enough to be acceptable. Add declination correction in a future bead.
+**Magnetic declination:** Not corrected in v0.1. The heading is magnetic north, not true north. The bearing-to-target is computed from GPS coordinates (true north). For short-range tracking (< 1 km) at most latitudes the error is small enough to be acceptable. Add declination correction in a future bead.
 
 ---
 
-## 6. CompassMath
+## 11. CompassMath
 
-**Files:** `src/modules/CompassModule/CompassMath.h`, `CompassMath.cpp`
+**Overlay files:** `firmware-overlay/src/modules/CompassModule/CompassMath.{h,cpp}`
 
 Pure functions, no state, no dependencies on Meshtastic types. Takes integer lat/lon (WGS84 × 1e7) to match the wire protocol.
 
@@ -285,9 +724,9 @@ return err   // [-180, 180]
 
 ---
 
-## 7. CompassState
+## 12. CompassState
 
-**Files:** `src/modules/CompassModule/CompassState.h`, `CompassState.cpp`
+**Overlay files:** `firmware-overlay/src/modules/CompassModule/CompassState.{h,cpp}`
 
 Owns the FSM, NVS persistence, Treasure store, and all session data. No I/O — no Wire, no radio, no display. Called by CompassModule.
 
@@ -339,7 +778,7 @@ struct Treasure {
 ```cpp
 class CompassState {
 public:
-    static constexpr uint8_t  MAX_TREASURES       = 5;
+    static constexpr uint8_t  MAX_TREASURES        = 5;
     static constexpr uint8_t  MAX_DISCOVERED_NODES = 8;
     static constexpr uint32_t DISCOVERY_WINDOW_MS  = 3000;
     static constexpr uint32_t PAIR_TIMEOUT_MS      = 60000;
@@ -465,9 +904,9 @@ Use `Preferences` class (`#include <Preferences.h>`). Open read-write for writes
 
 ---
 
-## 8. CompassModule
+## 13. CompassModule
 
-**Files:** `src/modules/CompassModule/CompassModule.h`, `CompassModule.cpp`
+**Overlay files:** `firmware-overlay/src/modules/CompassModule/CompassModule.{h,cpp}`
 
 The central coordinator. Extends `SinglePortModule` for packet handling and `OSThread` for the periodic position-update timer.
 
@@ -574,9 +1013,9 @@ Unicast (to=peerNodeNum): everything else
 
 ---
 
-## 9. CompassUI
+## 14. CompassUI
 
-**Files:** `src/modules/CompassModule/CompassUI.h`, `CompassUI.cpp`
+**Overlay files:** `firmware-overlay/src/modules/CompassModule/CompassUI.{h,cpp}`
 
 Handles all rendering and input. No radio calls — delegates to `CompassModule` for any packet sends.
 
@@ -695,134 +1134,249 @@ State::TRACKING_TREASURE:
 
 Long-press threshold: 800ms. Track `pressStartMs` on key-down event; evaluate duration on key-up.
 
-### Menu Entry Integration (Screen.cpp)
-
-Add one entry to the main Meshtastic menu (the exact insertion point depends on current Screen.cpp structure — find where other module menu entries are added and follow the same pattern):
-
-- Label: `"Compass"`
-- Action: call `CompassModule::instance->state()->startDiscovery()` then `CompassModule::instance->sendCapabilityQuery()`, then call `screen->setFrames()` to give the module its UI frame
-
-The rest of the Compass sub-menu (Save Treasure, Treasures list, End Session, Settings, Status/calibrate) lives entirely within `CompassUI::drawFrame` state transitions — not as separate Screen.cpp entries.
-
 ---
 
-## 10. Integration
+## 15. Integration
 
-### Modules.cpp
+Two upstream files. Both edits are applied by `apply.py`.
 
-Two lines:
+**File 1:** `src/modules/Modules.cpp` — two lines:
+
 ```cpp
-#include "modules/CompassModule/CompassModule.h"
+#include "modules/CompassModule/CompassModule.h"   // captains-compass:
 // in setupModules():
-new CompassModule();
+new CompassModule();                                 // captains-compass:
 ```
 
 The constructor registers the module with the `SinglePortModule` dispatcher and the `OSThread` scheduler. No other changes needed.
 
-### Screen.cpp
+**File 2:** `src/graphics/Screen.cpp` — one menu entry. Follow the pattern of whichever existing module adds a menu entry most recently — copy its exact registration approach. The entry triggers:
 
-One menu entry. Follow the pattern of whichever existing module adds a menu entry most recently — copy its exact registration approach. The entry just needs to trigger `CompassModule::instance->sendCapabilityQuery()` and a `setFrames()` call.
+```cpp
+CompassModule::instance->state()->startDiscovery();
+CompassModule::instance->sendCapabilityQuery();
+screen->setFrames();
+```
+
+Label: `"Compass"`. Anchor for the patch is the existing module's menu-entry registration line; insert ours directly after it.
+
+The rest of the Compass sub-menu (Save Treasure, Treasures list, End Session, Settings, Status/calibrate) lives entirely within `CompassUI::drawFrame` state transitions — not as separate `Screen.cpp` entries.
 
 ---
 
-## 11. Bead Breakdown
+## 16. v2 Roadmap (Deferred)
+
+These items were considered for v0.2 and deliberately deferred. Implement after the T114 build pipeline is shipping reliably and the protocol has stabilized.
+
+### 16.1 Native/Portduino build + smoke tests
+
+soniccyclone's prior-art repo includes a `Dockerfile.native` that builds the Meshtastic `native` (Portduino) PlatformIO environment with the patches applied, plus a smoke-test framework that spins up two simulated nodes and exercises the pairing protocol end-to-end on every PR. This catches protocol regressions without needing physical T114s.
+
+Add as:
+- `docker/Dockerfile.native` — analogous structure, env `native` instead of `heltec_mesh_node_t114`.
+- `docker/entrypoint-native.sh` — runs `pio run -e native` and writes `build.log`.
+- `tests/smoke/two_node.py` — Python harness that drives two `native` binaries via stdio, exchanges `CAPABILITY_QUERY` / `PAIR_REQUEST` / `POSITION_UPDATE`, asserts state machine transitions.
+- `tests/smoke/pairing.py` — full pairing-handshake assertion.
+- `.github/workflows/ci-native.yml` — runs both compile and smoke on every PR touching the patch surface or smoke tests.
+
+### 16.2 Reproducible-binary verification
+
+`SOURCE_DATE_EPOCH` plus auditing the firmware for `__DATE__` / `__TIME__` uses, so two builds at the same pin produce byte-identical UF2s. Cheap once the rest works; valuable for supply-chain auditing of release binaries.
+
+### 16.3 Magnetic declination correction
+
+WMM lookup table or fixed per-region offset. The v0.1 heading is magnetic; the bearing-to-target is true. For sub-1km tracking the error is small enough to ignore. Add when targeting longer ranges.
+
+### 16.4 Multi-target tracking
+
+PRD §6 explicitly excludes this. Add when there's a real CUJ for it (e.g., search-and-rescue with multiple Desires).
+
+---
+
+## 17. Bead Breakdown
 
 Each bead is independently committable. Implement in dependency order; parallel tracks are marked.
 
+The build infrastructure (BEAD-1 through BEAD-4) ships *before any C++ is written*. This is the change from v0.1: in v0.1, the build infrastructure was implicit and nonexistent, so the previous agent had nowhere to put its work and lost it all. v0.2 makes the build infrastructure the load-bearing foundation that everything else stacks onto.
+
 ---
 
-### BEAD-1: Variant Patch
+### BEAD-1: Repo scaffold + pin file
 **Depends on:** nothing
-**Files:** `variants/nrf52840/heltec_mesh_node_t114/variant.h`, `variant.cpp`
-**What to do:** Add the four `#define`s and the `Wire1` TwoWire instance per section 3 of this doc.
-**Acceptance:** Firmware compiles for `heltec_mesh_node_t114`. `Wire1.begin()` does not assert. A minimal I2C scan sketch on the T114 with QMC5883L wired returns address 0x0D.
-**Risk:** Verify `NRF_TWIM1` / `SPIM1_SPIS1_TWIM1_TWIS1_SPI1_TWI1_IRQn` identifiers exist in the nRF52840 ArduinoCore headers. Check existing `Wire` instantiation in the same file and copy the exact constructor form.
-
----
-
-### BEAD-2: Protobuf Definition
-**Depends on:** nothing (parallel with BEAD-1)
-**Files:** `protobufs/meshtastic/compass.proto`, `protobufs/meshtastic/portnums.proto`, generated `compass.pb.h` / `compass.pb.c`
-**What to do:** Write `compass.proto` per section 4. Add `COMPASS_APP = 300` to `portnums.proto`. Run `bin/generate-proto.sh`. Commit generated files.
-**Acceptance:** `compass.pb.h` exists, compiles, and `meshtastic_CompassMsgType` and `meshtastic_CompassPacket` are accessible. `meshtastic_PortNum_COMPASS_APP` resolves.
-
----
-
-### BEAD-3: Magnetometer Driver
-**Depends on:** BEAD-1 (needs Wire1 to exist)
-**Files:** `src/modules/CompassModule/Magnetometer.h`, `Magnetometer.cpp`
-**What to do:** Implement per section 5. Init sequence, DRDY-gated read, heading computation, calibration offset application.
+**Files:** `meshtastic-firmware-pin`, `Makefile`, `build.sh`, `.gitignore`, empty directories `firmware-overlay/`, `patches/`, `docker/`, `output/`
+**What to do:**
+- Pick a pinned SHA: latest commit on `meshtastic/firmware` `develop` at the time of starting work. Document in commit message which SHA and why.
+- Write `meshtastic-firmware-pin` with that SHA.
+- Write `Makefile` per section 4.1 (setup, build, shell, clean, bump-pin).
+- Write `build.sh` thin wrapper.
+- Add `vendor/`, `output/` to `.gitignore`.
 **Acceptance:**
-- `begin()` returns `OK` with QMC5883L connected, `NOT_FOUND` with nothing on bus, `INIT_FAILED` with bus present but chip ID wrong.
+- `make setup` clones `meshtastic/firmware` into `vendor/meshtastic-firmware/` at the pinned SHA.
+- Re-running `make setup` is a no-op (idempotent).
+- `make help` prints usage.
+- `vendor/` and `output/` are gitignored.
+
+---
+
+### BEAD-2: Docker pipeline
+**Depends on:** BEAD-1
+**Files:** `docker/Dockerfile`, `docker/entrypoint.sh`
+**What to do:**
+- Implement the multi-stage Dockerfile per section 4.2.
+- Implement `entrypoint.sh` per section 4.3.
+- At this stage, `firmware-overlay/` and `patches/apply.py` are still empty — the pipeline must still produce a stock `firmware.uf2` from the unmodified upstream.
+**Acceptance:**
+- `make build` produces `output/firmware.uf2` for the unmodified upstream firmware. (This is the "baseline" build: stock Meshtastic, no Compass code.)
+- Layer cache works: editing nothing and re-running `make build` re-uses all stages, takes < 30 seconds.
+- `make shell` drops into a shell at `/firmware-src` inside the image with `pio` on PATH.
+
+---
+
+### BEAD-3: Patcher framework
+**Depends on:** BEAD-1
+**Files:** `patches/apply.py`
+**What to do:**
+- Implement the `apply.py` skeleton per section 6.2 with the `MARKER`, the per-file function shape, the `--dry-run` mode, and the loud-on-anchor-missing exit. Include placeholder functions for all 5 patches that immediately `sys.exit("not yet implemented")` — they get filled in by BEAD-5, 6, 11, 12.
+- `apply.py` must be runnable from anywhere as long as cwd is the firmware source root.
+**Acceptance:**
+- `python3 apply.py --dry-run` from a clean firmware checkout succeeds (passes through the placeholder no-ops; documents that no patches are wired up yet).
+- `python3 apply.py` from an already-fully-patched checkout is a no-op (every function hits its `MARKER` skip path).
+- Removing any anchor from the source files makes `apply.py` exit non-zero with the `(file, anchor)` named.
+
+---
+
+### BEAD-4: GitHub Actions
+**Depends on:** BEAD-2
+**Files:** `.github/workflows/release.yml`, `.github/workflows/pr-build-t114.yml`, `.github/workflows/upstream-drift.yml`
+**What to do:** Implement all three workflows per section 5. Use `docker/build-push-action@v6` with GHA cache.
+**Acceptance:**
+- A push to `main` produces a tagged prerelease with `firmware.uf2` attached.
+- A PR touching `firmware-overlay/`, `patches/`, `docker/`, or `meshtastic-firmware-pin` produces a per-PR prerelease and posts a comment on the PR with the link.
+- Manually dispatching `upstream-drift.yml` with the pinned SHA equal to upstream develop HEAD exits 0 with no work.
+- Manually dispatching `upstream-drift.yml` with an artificially-stale pin opens a PR bumping the pin (assuming patcher anchors still apply).
+
+---
+
+### BEAD-5: Variant patch
+**Depends on:** BEAD-3
+**Files:** `patches/apply.py` (`patch_variant_h`, optionally `patch_variant_cpp`)
+**What to do:**
+- Read `vendor/meshtastic-firmware/variants/nrf52840/heltec_mesh_node_t114/variant.h`.
+- Choose anchor for variant.h (a unique stable line near the existing GPIO defines).
+- Implement `patch_variant_h` per section 8 to inject the 4 `#define`s.
+- Read `variant.cpp` and other nRF52 variants with `WIRE_INTERFACES_COUNT=2`. Determine if BSP auto-creates `Wire1`. If not, implement `patch_variant_cpp`.
+**Acceptance:**
+- `make build` succeeds (overlay still empty; this just confirms variant patch doesn't break the base build).
+- Booting the resulting UF2 on a T114 with QMC5883L wired: a minimal probe (e.g., temporary diagnostic in `setup()`) shows `Wire1.beginTransmission(0x0D)` returns 0 (ACK).
+
+---
+
+### BEAD-6: Protobuf — overlay + portnums patch
+**Depends on:** BEAD-3
+**Files:** `firmware-overlay/protobufs/meshtastic/compass.proto`, `patches/apply.py` (`patch_portnums_proto`)
+**What to do:**
+- Write `compass.proto` per section 9.
+- Read `vendor/meshtastic-firmware/protobufs/meshtastic/portnums.proto`.
+- Confirm value 300 is unused.
+- Choose anchor (the trailing `}` of the `meshtastic_PortNum` enum, or the last-defined enum member).
+- Implement `patch_portnums_proto` to inject `COMPASS_APP = 300;`.
+- Confirm exact upstream proto-regen script name (update `entrypoint.sh` if needed).
+**Acceptance:**
+- `make build` runs to completion. Generated `compass.pb.h` exists in the build output.
+- `meshtastic_PortNum_COMPASS_APP` resolves to 300 in the generated header.
+- `meshtastic_CompassMsgType` and `meshtastic_CompassPacket` are accessible.
+
+---
+
+### BEAD-7: Magnetometer driver
+**Depends on:** BEAD-5
+**Files:** `firmware-overlay/src/modules/CompassModule/Magnetometer.{h,cpp}`
+**What to do:** Implement per section 10. Init sequence, DRDY-gated read, heading computation, calibration offset application.
+**Acceptance:**
+- `make build` produces a UF2 that includes the new files.
+- On real hardware: `begin()` returns `OK` with QMC5883L connected, `NOT_FOUND` with nothing on bus, `INIT_FAILED` with bus present but chip ID wrong.
 - `heading()` returns a value in [0, 360) that rotates smoothly as the device is rotated.
-- `setCalibration(0,0,0)` and `setCalibration(measured offsets)` both compile and affect output.
 - No blocking delay in the hot path longer than `DRDY_TIMEOUT_MS`.
 
 ---
 
-### BEAD-4: CompassMath
-**Depends on:** nothing (parallel with BEAD-1, BEAD-2)
-**Files:** `src/modules/CompassModule/CompassMath.h`, `CompassMath.cpp`
-**What to do:** Implement the three functions in section 6.
-**Acceptance (unit-testable on host):**
-- `bearing(0, 0, 1e7, 0)` ≈ 0° (due north)
-- `bearing(0, 0, 0, 1e7)` ≈ 90° (due east)
-- `distanceMeters(0, 0, 0, 1e7)` ≈ 1111950m (1° longitude at equator)
-- `headingError(350, 10)` ≈ 20° (turn right 20°)
-- `headingError(10, 350)` ≈ -20° (turn left 20°)
+### BEAD-8: CompassMath
+**Depends on:** BEAD-2 (parallel with BEAD-5, BEAD-6, BEAD-7)
+**Files:** `firmware-overlay/src/modules/CompassModule/CompassMath.{h,cpp}`
+**What to do:** Implement the three functions in section 11.
+**Acceptance:**
+- `make build` succeeds; the CompassMath translation unit compiles.
+- Spot-check on host (small ad-hoc test program if convenient):
+  - `bearing(0, 0, 1e7, 0)` ≈ 0° (due north)
+  - `bearing(0, 0, 0, 1e7)` ≈ 90° (due east)
+  - `distanceMeters(0, 0, 0, 1e7)` ≈ 1111950m
+  - `headingError(350, 10)` ≈ 20°
+  - `headingError(10, 350)` ≈ -20°
+
+(v2 native/Portduino smoke build (section 16.1) will turn these into proper unit tests.)
 
 ---
 
-### BEAD-5: CompassState
-**Depends on:** BEAD-4 (imports CompassMath types)
-**Files:** `src/modules/CompassModule/CompassState.h`, `CompassState.cpp`
-**What to do:** Implement FSM, NVS load/save, Treasure CRUD, calibration sample accumulation, and Desire-side suppression logic per section 7.
+### BEAD-9: CompassState
+**Depends on:** BEAD-8
+**Files:** `firmware-overlay/src/modules/CompassModule/CompassState.{h,cpp}`
+**What to do:** Implement FSM, NVS load/save, Treasure CRUD, calibration sample accumulation, and Desire-side suppression logic per section 12.
 **Acceptance:**
-- State transitions follow the table in section 7 exactly. No invalid transitions compile.
-- `saveTreasure` / `treasure` round-trip through NVS correctly (call `begin()`, save, create new instance, call `begin()`, read back).
-- `shouldSendUpdate`: returns true immediately after `begin()`, returns false on second call with same position within `STATIONARY_SUPPRESS_MS`, returns true again after `STATIONARY_SUPPRESS_MS` even with same position.
-- `finishCalibration()` returns false if `calSampleCount() < MIN_CAL_SAMPLES`, true otherwise.
-- NVS cal version mismatch results in zero offsets returned, not a crash.
+- `make build` succeeds.
+- On real hardware:
+  - State transitions follow the diagram in section 12 exactly.
+  - `saveTreasure` / `treasure` round-trip through NVS correctly across a reboot.
+  - `shouldSendUpdate`: returns true initially, false on second call with same position within `STATIONARY_SUPPRESS_MS`, true again after `STATIONARY_SUPPRESS_MS` even with same position.
+  - `finishCalibration()` returns false if `calSampleCount() < MIN_CAL_SAMPLES`.
+  - NVS cal-version mismatch results in zero offsets returned, not a crash.
 
 ---
 
-### BEAD-6: CompassModule
-**Depends on:** BEAD-2 (proto types), BEAD-3 (Magnetometer), BEAD-5 (CompassState)
-**Files:** `src/modules/CompassModule/CompassModule.h`, `CompassModule.cpp`
-**What to do:** Implement packet dispatch, `runOnce` scheduler, send helpers per section 8.
+### BEAD-10: CompassModule
+**Depends on:** BEAD-6 (proto types), BEAD-7 (Magnetometer), BEAD-9 (CompassState)
+**Files:** `firmware-overlay/src/modules/CompassModule/CompassModule.{h,cpp}`
+**What to do:** Implement packet dispatch, `runOnce` scheduler, send helpers per section 13.
 **Acceptance:**
-- Module registers on `COMPASS_APP` port. Other port packets are ignored.
-- `sendCapabilityQuery()` produces a broadcast packet with `hop_limit=0` and type `CAPABILITY_QUERY`. Verify with a packet sniffer or log.
-- `handleReceived` dispatches correctly — inject a mock `PAIR_REQUEST` packet and verify `_state.getState() == State::PAIR_INCOMING`.
-- `runOnce` in `TRACKED` state calls `sendPacket` at approximately the configured interval and calls `_state.onUpdateSent`.
-- `wantUIFrame()` returns `true` in DISCOVERING, TRACKING, PAIR_INCOMING, CALIBRATING; `false` in IDLE and TRACKED.
+- `make build` succeeds.
+- On real hardware (or using a paired second T114):
+  - Module registers on `COMPASS_APP` port. Other-port packets are ignored.
+  - `sendCapabilityQuery()` produces a broadcast packet with `hop_limit=0` and type `CAPABILITY_QUERY`.
+  - Injected mock `PAIR_REQUEST` packet → `_state.getState() == State::PAIR_INCOMING`.
+  - In `TRACKED` state, `runOnce` calls `sendPacket` at approximately the configured interval and calls `_state.onUpdateSent`.
+  - `wantUIFrame()` returns `true` in DISCOVERING/TRACKING/PAIR_INCOMING/CALIBRATING; `false` in IDLE and TRACKED.
 
 ---
 
-### BEAD-7: CompassUI
-**Depends on:** BEAD-4 (CompassMath), BEAD-5 (CompassState), BEAD-6 (CompassModule, for send calls)
-**Files:** `src/modules/CompassModule/CompassUI.h`, `CompassUI.cpp`
-**What to do:** Implement `drawFrame`, `interceptingKeyboardInput`, `handleInputEvent` per section 9. All rendering geometry and input state machine live here.
+### BEAD-11: CompassUI
+**Depends on:** BEAD-8 (CompassMath), BEAD-9 (CompassState), BEAD-10 (CompassModule)
+**Files:** `firmware-overlay/src/modules/CompassModule/CompassUI.{h,cpp}`
+**What to do:** Implement `drawFrame`, `interceptingKeyboardInput`, `handleInputEvent` per section 14.
 **Acceptance:**
-- Arrow tip points visually upward when heading error = 0.
-- Arrow rotates clockwise for positive heading error, counter-clockwise for negative. Verified at ±45°, ±90°, ±180°.
-- Arrow blinks (500ms period) when `_state.isSignalLost()` is true.
-- PAIR_INCOMING screen shows node name; ACCEPT selection calls `module->sendPairAccept`.
-- CALIBRATING screen increments sample count in real time.
-- Long-press (>800ms) SELECT in TRACKING returns `false` from `interceptingKeyboardInput` and calls `screen->setFrames()`.
-- TRACKING_TREASURE shows `YOU'RE HERE` when distance < 15m.
+- `make build` succeeds.
+- On real hardware:
+  - Arrow tip points visually upward when heading error = 0.
+  - Arrow rotates clockwise for positive heading error, counter-clockwise for negative. Verified at ±45°, ±90°, ±180°.
+  - Arrow blinks (500ms period) when `_state.isSignalLost()` is true.
+  - PAIR_INCOMING screen shows node name; ACCEPT calls `module->sendPairAccept`.
+  - CALIBRATING screen increments sample count in real time.
+  - Long-press (>800ms) SELECT in TRACKING releases the UI frame and calls `screen->setFrames()`.
+  - TRACKING_TREASURE shows `YOU'RE HERE` when distance < 15m.
 
 ---
 
-### BEAD-8: Integration
-**Depends on:** BEAD-6, BEAD-7
-**Files:** `src/modules/Modules.cpp`, `src/graphics/Screen.cpp`
-**What to do:** Wire up per section 10. Two lines in Modules.cpp. One menu entry in Screen.cpp.
+### BEAD-12: Integration patches
+**Depends on:** BEAD-10, BEAD-11
+**Files:** `patches/apply.py` (`patch_modules_cpp`, `patch_screen_cpp`)
+**What to do:**
+- Read `vendor/meshtastic-firmware/src/modules/Modules.cpp`. Choose anchors for the include and for the `setupModules()` body. Implement `patch_modules_cpp` per section 15.
+- Read `vendor/meshtastic-firmware/src/graphics/Screen.cpp`. Find the most recent module's menu-entry registration. Choose an anchor on its line. Implement `patch_screen_cpp` to inject the Compass menu entry.
 **Acceptance:**
-- Firmware compiles and boots on T114 without assert or hang.
-- "Compass" entry appears in the Meshtastic main menu.
-- Selecting it triggers DISCOVERING state and the node list frame appears.
-- All existing Meshtastic functionality (text, position share, mesh routing) is unaffected when Compass is idle.
+- `make build` succeeds end-to-end.
+- Booted UF2 on T114:
+  - "Compass" entry appears in the Meshtastic main menu.
+  - Selecting it triggers DISCOVERING state and the node list frame appears.
+  - All existing Meshtastic functionality (text, position share, mesh routing) is unaffected when Compass is idle.
+- A second, paired T114 successfully exchanges PAIR_REQUEST / PAIR_ACCEPT / PAIR_CONFIRM and enters TRACKING / TRACKED states. Position arrow updates as devices are moved relative to each other.
 
 ---
 
