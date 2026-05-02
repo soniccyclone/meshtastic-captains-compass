@@ -104,7 +104,7 @@ The feature has to be invisible when not in use. A user who never activates Comp
 **Actor:** Two field users who want to track each other. Alice initiates; Bob accepts.
 
 **Pre-conditions:**
-- Both devices on the same Meshtastic mesh (not necessarily adjacent — mesh routing applies)
+- Both devices physically adjacent (pairing is intentionally direct-link only)
 - Both running this firmware
 - Neither currently in an active tracking session
 
@@ -112,10 +112,10 @@ The feature has to be invisible when not in use. A user who never activates Comp
 1. Alice navigates to **Menu → Compass → Find Desire → [Node list]**.
 2. Display shows Meshtastic node list filtered to nodes that have advertised `COMPASS_APP` capability. Nodes are sorted by last-heard time.
 3. Alice selects Bob's node. Display shows: `Send pair request to Bob? [YES / NO]`.
-4. Alice confirms. Firmware broadcasts a `PAIR_REQUEST` packet with `hop_limit=3` on port `COMPASS_APP`. Payload: Alice's node ID.
+4. Alice confirms. Firmware broadcasts a `PAIR_REQUEST` packet with `hop_limit=0` on port `COMPASS_APP`. Payload: Alice's node ID. Zero hops — intentionally direct-link only; pairing requires physical proximity.
 5. Bob's device receives the request. If Bob is in **Menu → Compass → Find Desire** (discovery mode): Bob's display shows `Alice wants to track you. [ACCEPT / REJECT]`.
-6. Bob selects ACCEPT. Firmware sends unicast `PAIR_ACCEPT` back to Alice, `hop_limit=3`.
-7. Alice's device receives ACCEPT. Firmware sends unicast `PAIR_CONFIRM` to Bob.
+6. Bob selects ACCEPT. Firmware sends unicast `PAIR_ACCEPT` back to Alice, `hop_limit=0`.
+7. Alice's device receives ACCEPT. Firmware sends unicast `PAIR_CONFIRM` to Bob, `hop_limit=0`.
 8. Both devices transition to **paired state**. Display on each shows `Paired: [other node name]`.
 9. Tracking session begins automatically (see CUJ-4).
 
@@ -127,7 +127,7 @@ The feature has to be invisible when not in use. A user who never activates Comp
 - Bob is not in discovery mode: request is queued on Bob's device; Bob sees a notification banner on next screen wake: `Alice wants to track you`. Bob can accept or reject from notifications.
 - Alice selects a node that doesn't support COMPASS_APP (filtered out of list — shouldn't happen, but if stale capability data): pair request sent, no response, timeout as above.
 
-**Protocol note:** `hop_limit=3` on all pairing packets, unlike Friend Finder's `hop_limit=1`. This firmware is intended for mesh use, not just direct-link. Mesh relay is a first-class requirement, not an afterthought.
+**Protocol note:** Pairing packets use `hop_limit=0` — pairing is a deliberate, proximate act. You hand your device to your friend, not to the mesh. Post-pairing tracking packets use `hop_limit=3` so Alice and Bob can separate across the mesh and still exchange position updates.
 
 ---
 
@@ -273,7 +273,9 @@ message CompassPacket {
 }
 ```
 
-**Routing:** All packets `hop_limit=3`. Unicast for PAIR_ACCEPT, PAIR_CONFIRM, PAIR_REJECT, SESSION_END, POSITION_UPDATE. Broadcast for PAIR_REQUEST, CAPABILITY_ADV.
+**Routing:**
+- `hop_limit=0` — PAIR_REQUEST, PAIR_ACCEPT, PAIR_CONFIRM, PAIR_REJECT (proximity-required; no mesh relay)
+- `hop_limit=3` — POSITION_UPDATE, SESSION_END, CAPABILITY_ADV (mesh-routed after pairing)
 
 **Update interval:** 30s default, stored in NVS, configurable via **Menu → Compass → Settings → Update Interval** (10s / 30s / 60s / 120s).
 
