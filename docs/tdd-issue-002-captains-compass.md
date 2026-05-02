@@ -133,18 +133,24 @@ meshtastic-captains-compass/
 
 ## 3. Pin File
 
-A single file at the repo root, `meshtastic-firmware-pin`, contains exactly one line: the 40-character upstream SHA. No surrounding whitespace, no trailing newline beyond the standard.
+A single file at the repo root, `meshtastic-firmware-pin`, contains exactly one line: a git ref. The ref can be a release tag (preferred) or a full commit SHA. GitHub's `uploadpack.allowReachableSHA1InWant` lets us shallow-fetch either form.
+
+**Default:** the latest non-prerelease tag from `meshtastic/firmware`. As of this writing, that's `v2.7.15.567b8ea`. Meshtastic ships their releases on two GitHub tracks:
+- **Beta** — tagged with `prerelease: false`. This is the *stable distribution channel* — what end-users flash. There is no "GA" or "Stable" track above Beta.
+- **Alpha** — tagged with `prerelease: true`. Bleeding-edge, week-to-week churn.
+
+We pin to Beta. Pinning to a develop-branch SHA was the v0.2 initial approach; v0.2.1 switched to tag-based pinning so users get firmware built from the same upstream baseline they'd flash from Heltec/Meshtastic directly.
 
 Every component reads from this file:
 
-- `make setup` checks out this SHA in `vendor/meshtastic-firmware/`
-- `make build` passes it as `--build-arg FIRMWARE_SHA=...` to docker
+- `make setup` checks out this ref in `vendor/meshtastic-firmware/`
+- `make build` passes it as `--build-arg FIRMWARE_REF=...` to docker
 - `release.yml` and `pr-build-t114.yml` do the same
-- `upstream-drift.yml` compares it to upstream `develop` HEAD weekly and proposes a bump
+- `upstream-drift.yml` compares it to the latest non-prerelease tag weekly and proposes a bump
 
-Bumping the pin is a one-line commit. The pin tracks `meshtastic/firmware` `develop` HEAD at known-tested points; bumps go through the drift workflow (section 5.3) so each bump is gated on the patcher still applying cleanly and the firmware still building.
+Bumping the pin is a one-line commit (`make bump-pin REF=v2.X.Y.zzzzzz`). Bumps go through the drift workflow so each bump is gated on the patcher still applying cleanly and the firmware still building against the new upstream.
 
-The pin is the single source of truth for "which upstream did this code work against." When something breaks in the field, the SHA in this file is what reproduces the build that produced the failing UF2.
+The pin is the single source of truth for "which upstream did this code work against." When something breaks in the field, the ref in this file is what reproduces the build that produced the failing UF2.
 
 ---
 
@@ -153,7 +159,7 @@ The pin is the single source of truth for "which upstream did this code work aga
 ### 4.1 Makefile
 
 ```make
-FIRMWARE_SHA := $(shell cat meshtastic-firmware-pin 2>/dev/null)
+FIRMWARE_REF := $(shell cat meshtastic-firmware-pin 2>/dev/null)
 FIRMWARE_DIR := vendor/meshtastic-firmware
 IMAGE        := cc-builder
 OUTPUT_DIR   := $(CURDIR)/output
@@ -170,10 +176,10 @@ help:
 	@echo "  clean     — remove output/"
 	@echo "  bump-pin  — write SHA=<sha> to meshtastic-firmware-pin and re-setup"
 	@echo
-	@echo "FIRMWARE_SHA = $(FIRMWARE_SHA)"
+	@echo "FIRMWARE_REF = $(FIRMWARE_REF)"
 
 setup:
-	@test -n "$(FIRMWARE_SHA)" || ( echo "meshtastic-firmware-pin missing or empty" && exit 1 )
+	@test -n "$(FIRMWARE_REF)" || ( echo "meshtastic-firmware-pin missing or empty" && exit 1 )
 	@if [ ! -d $(FIRMWARE_DIR)/.git ]; then \
 	  mkdir -p $(FIRMWARE_DIR); \
 	  cd $(FIRMWARE_DIR) && \
@@ -181,13 +187,13 @@ setup:
 	    git remote add origin https://github.com/meshtastic/firmware.git; \
 	fi
 	cd $(FIRMWARE_DIR) && \
-	  git fetch --depth=1 origin $(FIRMWARE_SHA) && \
+	  git fetch --depth=1 origin $(FIRMWARE_REF) && \
 	  git checkout -q FETCH_HEAD && \
 	  git submodule update --init --recursive --depth=1
 
 build:
-	@test -n "$(FIRMWARE_SHA)" || ( echo "meshtastic-firmware-pin missing or empty" && exit 1 )
-	docker build --build-arg FIRMWARE_SHA=$(FIRMWARE_SHA) -t $(IMAGE) -f docker/Dockerfile .
+	@test -n "$(FIRMWARE_REF)" || ( echo "meshtastic-firmware-pin missing or empty" && exit 1 )
+	docker build --build-arg FIRMWARE_REF=$(FIRMWARE_REF) -t $(IMAGE) -f docker/Dockerfile .
 	@mkdir -p $(OUTPUT_DIR)
 	docker run --rm -v "$(OUTPUT_DIR):/output" $(IMAGE)
 	@echo "Artifact: $(OUTPUT_DIR)/firmware.uf2"
@@ -225,15 +231,15 @@ RUN python3 -m venv /opt/pio-venv \
  && /opt/pio-venv/bin/pip install --upgrade pip platformio
 
 # Stage 2: pinned firmware — clone + checkout SHA + install pio platform.
-# Invalidates ONLY when FIRMWARE_SHA changes.
+# Invalidates ONLY when FIRMWARE_REF changes.
 FROM toolchain AS firmware
-ARG FIRMWARE_SHA
-RUN test -n "${FIRMWARE_SHA}" || ( echo "FIRMWARE_SHA build-arg required" && exit 1 )
+ARG FIRMWARE_REF
+RUN test -n "${FIRMWARE_REF}" || ( echo "FIRMWARE_REF build-arg required" && exit 1 )
 RUN mkdir -p /firmware-src \
  && cd /firmware-src \
  && git init -q \
  && git remote add origin https://github.com/meshtastic/firmware.git \
- && git fetch --depth=1 origin ${FIRMWARE_SHA} \
+ && git fetch --depth=1 origin ${FIRMWARE_REF} \
  && git checkout -q FETCH_HEAD \
  && git submodule update --init --recursive --depth=1 \
  && pio pkg install --environment heltec-mesh-node-t114
@@ -321,9 +327,9 @@ Three workflows, each with a single job. All run on `ubuntu-latest`. Verificatio
 - Permissions: `contents: write`.
 - Steps:
   1. `actions/checkout@v4`.
-  2. Read `meshtastic-firmware-pin` into `FIRMWARE_SHA` env var.
+  2. Read `meshtastic-firmware-pin` into `FIRMWARE_REF` env var.
   3. Compute CalVer tag: `v$(date -u +%Y.%m.%d)-${GITHUB_RUN_NUMBER}`.
-  4. `docker/build-push-action@v6` with `--build-arg FIRMWARE_SHA=$FIRMWARE_SHA`, `cache-from: type=gha`, `cache-to: type=gha,mode=max`, `load: true`, `tags: cc-builder:release`.
+  4. `docker/build-push-action@v6` with `--build-arg FIRMWARE_REF=$FIRMWARE_REF`, `cache-from: type=gha`, `cache-to: type=gha,mode=max`, `load: true`, `tags: cc-builder:release`.
   5. `docker run --rm -v "$PWD/output:/output" cc-builder:release`.
   6. `softprops/action-gh-release@v2` with `tag_name`, `prerelease: true`, `generate_release_notes: true`, `files: output/firmware.uf2`. Body template includes UF2 flash instructions for the T114 (double-press reset → drag-drop onto `T114_BOOT`).
 
@@ -350,9 +356,9 @@ Three workflows, each with a single job. All run on `ubuntu-latest`. Verificatio
 - Steps:
   1. `actions/checkout@v4`.
   2. Read pinned SHA.
-  3. `git ls-remote https://github.com/meshtastic/firmware.git refs/heads/develop` → `LATEST_SHA`.
-  4. If `LATEST_SHA == FIRMWARE_SHA`: exit 0, no work.
-  5. `docker build --build-arg FIRMWARE_SHA=$LATEST_SHA -t cc-builder-drift -f docker/Dockerfile .`.
+  3. `gh release list -R meshtastic/firmware --exclude-pre-releases --json tagName --jq '.[0].tagName'` → `LATEST_TAG`.
+  4. If `LATEST_TAG == FIRMWARE_REF`: exit 0, no work.
+  5. `docker build --build-arg FIRMWARE_REF=$LATEST_TAG -t cc-builder-drift -f docker/Dockerfile .`.
   6. `docker run --rm cc-builder-drift python3 /patches/apply.py --dry-run` (the `--dry-run` mode of `apply.py`, section 6.2, checks anchor presence without writing).
   7. If dry-run succeeds and a full `pio run` also succeeds: write `LATEST_SHA` to `meshtastic-firmware-pin`, commit on a branch, push, open PR titled `chore: bump firmware pin to <sha7>`.
   8. If dry-run fails: parse `apply.py` stderr for missing-anchor lines, open issue tagged `upstream-drift` listing each failed `(file, anchor)` pair.
@@ -1242,7 +1248,7 @@ The build infrastructure (BEAD-1 through BEAD-4) ships *before any C++ is writte
 **Acceptance:**
 - A push to `main` produces a tagged prerelease with `firmware.uf2` attached.
 - A PR touching `firmware-overlay/`, `patches/`, `docker/`, or `meshtastic-firmware-pin` produces a per-PR prerelease and posts a comment on the PR with the link.
-- Manually dispatching `upstream-drift.yml` with the pinned SHA equal to upstream develop HEAD exits 0 with no work.
+- Manually dispatching `upstream-drift.yml` with the pinned ref equal to the latest non-prerelease tag exits 0 with no work.
 - Manually dispatching `upstream-drift.yml` with an artificially-stale pin opens a PR bumping the pin (assuming patcher anchors still apply).
 
 ---

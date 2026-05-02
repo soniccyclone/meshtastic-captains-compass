@@ -1,8 +1,13 @@
 name: Upstream Drift Detection
 
-# Weekly check: does the patcher still apply against latest upstream?
+# Weekly check: does the patcher still apply against the latest stable
+# upstream release? Tracks meshtastic/firmware's GitHub releases filtered
+# to non-prereleases only (which Meshtastic labels "Beta" — that's their
+# stable distribution channel; "Alpha" releases are pre-release).
+#
 # - Anchors still match → open a PR bumping meshtastic-firmware-pin.
 # - Anchors fail → open an issue tagged upstream-drift listing failures.
+#
 # See docs/tdd-issue-002-captains-compass.md §5.3.
 
 on:
@@ -28,24 +33,30 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Read pinned SHA
+      - name: Read pinned ref
         id: pin
         run: echo "current=$(cat meshtastic-firmware-pin)" >> "$GITHUB_OUTPUT"
 
-      - name: Resolve latest upstream develop SHA
+      - name: Resolve latest stable upstream release tag
         id: upstream
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          LATEST=$(git ls-remote https://github.com/meshtastic/firmware.git refs/heads/develop | awk '{print $1}')
+          LATEST=$(gh release list -R meshtastic/firmware --exclude-pre-releases --json tagName --jq '.[0].tagName')
+          if [[ -z "$LATEST" ]]; then
+            echo "ERROR: no non-prerelease tags found on meshtastic/firmware" >&2
+            exit 1
+          fi
           echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
-          echo "Current pin: ${{ steps.pin.outputs.current }}"
-          echo "Latest develop: $LATEST"
+          echo "Current pin:        ${{ steps.pin.outputs.current }}"
+          echo "Latest stable tag:  $LATEST"
 
       - name: Skip if pin already at latest
         id: skip
         run: |
           if [[ "${{ steps.pin.outputs.current }}" == "${{ steps.upstream.outputs.latest }}" ]]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "Pin is already at upstream HEAD; nothing to do."
+            echo "Pin is already at latest stable; nothing to do."
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
@@ -54,7 +65,7 @@ jobs:
         if: steps.skip.outputs.skip == 'false'
         uses: docker/setup-buildx-action@v3
 
-      - name: Build cc-builder against latest upstream
+      - name: Build cc-builder against latest stable
         if: steps.skip.outputs.skip == 'false'
         id: build
         continue-on-error: true
@@ -65,11 +76,11 @@ jobs:
           load: true
           tags: cc-builder:drift
           build-args: |
-            FIRMWARE_SHA=${{ steps.upstream.outputs.latest }}
+            FIRMWARE_REF=${{ steps.upstream.outputs.latest }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Dry-run patcher against latest upstream
+      - name: Dry-run patcher against latest stable
         if: steps.skip.outputs.skip == 'false' && steps.build.outcome == 'success'
         id: dryrun
         continue-on-error: true
@@ -78,13 +89,17 @@ jobs:
             "cd /firmware-src && rsync -a /overlay/ . && python3 /patches/apply.py --dry-run" \
             2>&1 | tee dryrun.log
 
-      - name: Verify full build against latest upstream
+      - name: Verify full build against latest stable
         if: steps.skip.outputs.skip == 'false' && steps.dryrun.outcome == 'success'
         id: fullbuild
         continue-on-error: true
         run: |
           mkdir -p output
           docker run --rm -v "$PWD/output:/output" cc-builder:drift 2>&1 | tee build.log
+
+      - name: Update pin file
+        if: steps.skip.outputs.skip == 'false' && steps.fullbuild.outcome == 'success'
+        run: printf "%s\n" "${{ steps.upstream.outputs.latest }}" > meshtastic-firmware-pin
 
       - name: Open PR bumping pin (drift compatible)
         if: steps.skip.outputs.skip == 'false' && steps.fullbuild.outcome == 'success'
@@ -98,16 +113,12 @@ jobs:
           body: |
             Automatic pin bump from upstream-drift workflow.
 
-            **From:** [`${{ steps.pin.outputs.current }}`](https://github.com/meshtastic/firmware/commit/${{ steps.pin.outputs.current }})
-            **To:** [`${{ steps.upstream.outputs.latest }}`](https://github.com/meshtastic/firmware/commit/${{ steps.upstream.outputs.latest }})
+            **From:** [`${{ steps.pin.outputs.current }}`](https://github.com/meshtastic/firmware/tree/${{ steps.pin.outputs.current }})
+            **To:** [`${{ steps.upstream.outputs.latest }}`](https://github.com/meshtastic/firmware/releases/tag/${{ steps.upstream.outputs.latest }})
 
             All patcher anchors still match; full build succeeded.
           labels: upstream-drift
           add-paths: meshtastic-firmware-pin
-
-      - name: Update pin file
-        if: steps.skip.outputs.skip == 'false' && steps.fullbuild.outcome == 'success'
-        run: printf "%s\n" "${{ steps.upstream.outputs.latest }}" > meshtastic-firmware-pin
 
       - name: File drift issue (anchors moved)
         if: steps.skip.outputs.skip == 'false' && (steps.dryrun.outcome == 'failure' || steps.build.outcome == 'failure' || steps.fullbuild.outcome == 'failure')
@@ -120,10 +131,10 @@ jobs:
             const body = [
               `Automatic upstream-drift report.`,
               ``,
-              `Current pin: \`${{ steps.pin.outputs.current }}\``,
-              `Latest upstream develop: \`${{ steps.upstream.outputs.latest }}\``,
+              `Current pin:        \`${{ steps.pin.outputs.current }}\``,
+              `Latest stable tag:  \`${{ steps.upstream.outputs.latest }}\``,
               ``,
-              `Patcher dry-run / full build failed against upstream HEAD. Investigate which anchor moved and update \`patches/apply.py\`.`,
+              `Patcher dry-run / full build failed against the latest stable upstream release. Investigate which anchor moved and update \`patches/apply.py\`.`,
               ``,
               `### Dry-run output`,
               '```',

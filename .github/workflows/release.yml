@@ -23,9 +23,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Read pinned firmware SHA
+      - name: Read pinned firmware ref
         id: pin
-        run: echo "sha=$(cat meshtastic-firmware-pin)" >> "$GITHUB_OUTPUT"
+        run: echo "ref=$(cat meshtastic-firmware-pin)" >> "$GITHUB_OUTPUT"
 
       - name: Compute CalVer tag
         id: tag
@@ -42,7 +42,7 @@ jobs:
           load: true
           tags: cc-builder:release
           build-args: |
-            FIRMWARE_SHA=${{ steps.pin.outputs.sha }}
+            FIRMWARE_REF=${{ steps.pin.outputs.ref }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -61,7 +61,7 @@ jobs:
           body: |
             ## Captain's Compass ${{ steps.tag.outputs.tag }}
 
-            Built against meshtastic/firmware [`${{ steps.pin.outputs.sha }}`](https://github.com/meshtastic/firmware/commit/${{ steps.pin.outputs.sha }}).
+            Built against meshtastic/firmware [`${{ steps.pin.outputs.ref }}`](https://github.com/meshtastic/firmware/tree/${{ steps.pin.outputs.ref }}).
 
             ### Heltec Mesh Node T114 (nRF52840)
 

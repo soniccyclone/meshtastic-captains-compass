@@ -28,16 +28,16 @@ RUN mkdir -p /opt/pio-venv/share \
 
 # ---------------------------------------------------------------------------
 # Stage 2: pinned firmware — clone + checkout SHA + install pio platform.
-# Invalidates ONLY when FIRMWARE_SHA changes.
+# Invalidates ONLY when FIRMWARE_REF changes.
 # ---------------------------------------------------------------------------
 FROM toolchain AS firmware
-ARG FIRMWARE_SHA
-RUN test -n "${FIRMWARE_SHA}" || ( echo "FIRMWARE_SHA build-arg required" && exit 1 )
+ARG FIRMWARE_REF
+RUN test -n "${FIRMWARE_REF}" || ( echo "FIRMWARE_REF build-arg required" && exit 1 )
 RUN mkdir -p /firmware-src \
  && cd /firmware-src \
  && git init -q \
  && git remote add origin https://github.com/meshtastic/firmware.git \
- && git fetch --depth=1 origin ${FIRMWARE_SHA} \
+ && git fetch --depth=1 origin ${FIRMWARE_REF} \
  && git checkout -q FETCH_HEAD \
  && git submodule update --init --recursive --depth=1 \
  && pio pkg install --environment heltec-mesh-node-t114

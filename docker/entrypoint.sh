@@ -38,16 +38,31 @@ echo "=== Build heltec-mesh-node-t114 ==="
 pio run --environment heltec-mesh-node-t114
 
 echo "=== Emit artifact ==="
-# Meshtastic's custom build emits firmware-heltec-mesh-node-t114-<ver>-<sha>.uf2.
-# Glob it and copy to a stable name; also preserve the versioned name for traceability.
+# Meshtastic's UF2 naming convention varies by upstream version:
+#   v2.7.x stable: firmware.uf2
+#   develop bleeding edge: firmware-heltec-mesh-node-t114-<ver>.<sha>.uf2
+# Match either pattern, exclude factory_erase, and require exactly one match.
 mkdir -p /output
 shopt -s nullglob
-UF2_FILES=(.pio/build/heltec-mesh-node-t114/firmware-heltec-mesh-node-t114-*.uf2)
-if [[ ${#UF2_FILES[@]} -ne 1 ]]; then
-  echo "ERROR: expected exactly 1 firmware UF2, found ${#UF2_FILES[@]}: ${UF2_FILES[*]}" >&2
+UF2_FILES=(.pio/build/heltec-mesh-node-t114/firmware*.uf2)
+# Filter out OTA / DFU intermediates (rare; defensive).
+filtered=()
+for f in "${UF2_FILES[@]}"; do
+  case "$(basename "$f")" in
+    *factory*|*bootloader*) continue ;;
+    *) filtered+=("$f") ;;
+  esac
+done
+if [[ ${#filtered[@]} -ne 1 ]]; then
+  echo "ERROR: expected exactly 1 firmware UF2, found ${#filtered[@]}: ${filtered[*]:-none}" >&2
   exit 1
 fi
-cp "${UF2_FILES[0]}" /output/firmware.uf2
-cp "${UF2_FILES[0]}" "/output/$(basename "${UF2_FILES[0]}")"
-echo "Done: /output/firmware.uf2"
-echo "      /output/$(basename "${UF2_FILES[0]}")"
+cp "${filtered[0]}" /output/firmware.uf2
+versioned="$(basename "${filtered[0]}")"
+if [[ "$versioned" != "firmware.uf2" ]]; then
+  cp "${filtered[0]}" "/output/$versioned"
+  echo "Done: /output/firmware.uf2"
+  echo "      /output/$versioned"
+else
+  echo "Done: /output/firmware.uf2"
+fi

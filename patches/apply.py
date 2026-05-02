@@ -176,7 +176,7 @@ def patch_screen_cpp(dry_run=False):
     if MARKER in text:
         print(f"  Skipped {path}: already patched"); return
 
-    enum_anchor   = "enum optionsNumbers { Back, Mute, Backlight, Position, Preset, Freetext, Sleep, enumEnd };"
+    enum_anchor   = "enum optionsNumbers { Back, Backlight, Position, Preset, Freetext, Sleep, enumEnd };"
     array_anchor  = "    optionsEnumArray[options++] = Position;"
     cb_anchor     = ("        } else if (selected == Freetext) {\n"
                      "            cannedMessageModule->LaunchFreetextWithDestination(NODENUM_BROADCAST);\n"
@@ -195,6 +195,9 @@ def patch_screen_cpp(dry_run=False):
         f"Sleep, Compass, enumEnd  /* {MARKER} */",
     )
     text = text.replace(enum_anchor, enum_replacement, 1)
+    # The Position case in v2.7.15 dispatches via injectInputEvent rather than
+    # service->trySendPosition. We don't depend on that detail; we just add a
+    # new Compass case to the lambda after the Freetext case.
 
     # 2. options array: append after Position branch
     array_replacement = (
