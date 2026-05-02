@@ -97,7 +97,10 @@ void CompassMenu::buildRoot() {
                 }
                 break;
             case Status:
-                LOG_INFO("Compass menu: Status (stub — bd-9-5)");
+                if (CompassModule::instance) {
+                    CompassModule::instance->state()->startStatus();
+                    CompassModule::instance->notifyUIChanged();
+                }
                 break;
             case Settings:
                 CompassMenu::pendingToast = "Coming soon";
