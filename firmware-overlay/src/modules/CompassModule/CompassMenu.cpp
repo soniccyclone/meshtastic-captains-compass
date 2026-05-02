@@ -49,7 +49,7 @@ void CompassMenu::buildRoot() {
     opts.bannerCallback = [](int selected) -> void {
         switch (selected) {
             case FindDesire:
-                LOG_INFO("Compass menu: Find Desire (stub — bd-9-2)");
+                if (CompassModule::instance) CompassModule::instance->sendCapabilityQuery();
                 break;
             case Treasures:
                 graphics::menuHandler::menuQueue = graphics::menuHandler::compass_treasure_picker;
@@ -58,10 +58,19 @@ void CompassMenu::buildRoot() {
                 LOG_INFO("Compass menu: Save Treasure (stub — bd-9-3)");
                 break;
             case Calibrate:
-                LOG_INFO("Compass menu: Calibrate (stub — bd-9-2)");
+                if (CompassModule::instance) {
+                    CompassModule::instance->state()->startCalibration();
+                    CompassModule::instance->notifyUIChanged();
+                }
                 break;
             case EndSession:
-                LOG_INFO("Compass menu: End Session (stub — bd-9-2)");
+                if (CompassModule::instance &&
+                    CompassModule::instance->state()->session().peerNodeNum != 0) {
+                    CompassModule::instance->sendSessionEnd();
+                } else {
+                    CompassMenu::pendingToast = "No active session";
+                    graphics::menuHandler::menuQueue = graphics::menuHandler::compass_toast;
+                }
                 break;
             case Status:
                 LOG_INFO("Compass menu: Status (stub — bd-9-5)");
