@@ -12,7 +12,8 @@
       "Bash(podman ps *)",
       "Bash(podman run *)",
       "Bash(podman logs *)",
-      "Bash(podman inspect *)"
+      "Bash(podman inspect *)",
+      "Bash(bd *)"
     ],
     "deny": [],
     "additionalDirectories": [
