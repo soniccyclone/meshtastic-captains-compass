@@ -113,7 +113,7 @@ The feature has to be invisible when not in use. A user who never activates Comp
 2. Display shows Meshtastic node list filtered to nodes that have advertised `COMPASS_APP` capability. Nodes are sorted by last-heard time.
 3. Alice selects Bob's node. Display shows: `Send pair request to Bob? [YES / NO]`.
 4. Alice confirms. Firmware broadcasts a `PAIR_REQUEST` packet with `hop_limit=3` on port `COMPASS_APP`. Payload: Alice's node ID.
-5. Bob's device receives the request. If Bob is in **Menu → Compass → Find Desire** (discovery mode): Bob's display shows `Alice wants to track you. [ACCEPT / REJECT]` and emits a short beep via buzzer (if present).
+5. Bob's device receives the request. If Bob is in **Menu → Compass → Find Desire** (discovery mode): Bob's display shows `Alice wants to track you. [ACCEPT / REJECT]`.
 6. Bob selects ACCEPT. Firmware sends unicast `PAIR_ACCEPT` back to Alice, `hop_limit=3`.
 7. Alice's device receives ACCEPT. Firmware sends unicast `PAIR_CONFIRM` to Bob.
 8. Both devices transition to **paired state**. Display on each shows `Paired: [other node name]`.
@@ -192,7 +192,7 @@ The feature has to be invisible when not in use. A user who never activates Comp
 2. User selects a Treasure. Display shows label, coordinates, distance from current position.
 3. User confirms. Compass screen takes over (same layout as CUJ-4 but no remote device).
 4. Arrow points toward Treasure. Distance updates as user moves.
-5. When distance drops below **15 meters**: arrow replaced with `YOU'RE HERE` text and device buzzes (if buzzer present). This threshold accounts for GPS accuracy limits.
+5. When distance drops below **15 meters**: arrow replaced with `YOU'RE HERE` text and display stays on. This threshold accounts for GPS accuracy limits.
 6. User long-presses SELECT to exit compass view. Session persists in background (same as CUJ-4).
 7. To end: **Menu → Compass → End Session**.
 
@@ -308,12 +308,12 @@ M variants/nrf52840/heltec_mesh_node_t114/variant.cpp (+TwoWire Wire1(NRF_TWIM1,
 
 ---
 
-## 10. Open Questions
+## 10. Decisions
 
-1. What NVS namespace do we use? Meshtastic uses `prefs` for most settings. We should use a separate namespace (`compass`) to avoid key collisions.
-2. Should CAPABILITY_ADV be broadcast on boot, or only when the user enters the Compass menu? Boot broadcast is noisier on the mesh but makes node discovery instant.
-3. Update interval when the tracked device is stationary: should we suppress updates if GPS position hasn't changed by more than N meters? Saves battery and bandwidth.
-4. Does the T114 have a buzzer wired to a GPIO? If so, which pin? The "arrived at Treasure" notification would benefit from it.
+1. **NVS namespace:** Use `compass`. Meshtastic uses `prefs`; a dedicated namespace avoids key collisions and makes wipe/reset straightforward.
+2. **CAPABILITY_ADV timing:** Not on boot — too noisy. Broadcast only when the user enters the Compass menu (on-demand). Acceptable latency for discovery; saves mesh bandwidth for nodes that never use the feature.
+3. **Stationary update suppression:** If the Desire's GPS position has not changed beyond GPS noise floor, suppress position updates for up to **5 minutes**. After 5 minutes, send an update regardless (keepalive). Resume normal 30s interval as soon as movement is detected.
+4. **Buzzer:** No buzzer support in v0.1. There is an outstanding power draw issue with the T114's buzzer circuit that must be resolved first. "Arrived at Treasure" notification is visual only (arrow replaced with `YOU'RE HERE`, display stays on).
 
 ---
 
