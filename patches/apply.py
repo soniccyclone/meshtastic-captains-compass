@@ -78,22 +78,26 @@ def _todo(bead, name):
 # ---------------------------------------------------------------------------
 
 def patch_variant_h(dry_run=False):
-    """Inject the QMC5883L pin defines into the T114 variant.h.
+    """No-op: T114 variant.h is already complete for QMC5883L use.
 
-    Implemented by BEAD-5. See TDD §8.
+    BEAD-5 finding: upstream variants/nrf52840/heltec_mesh_node_t114/variant.h
+    already defines WIRE_INTERFACES_COUNT=2, PIN_WIRE1_SDA=P0.16, and
+    PIN_WIRE1_SCL=P0.13 (lines 99, 109-110). The Magnetometer driver
+    uses Wire1 directly; no MAG_SDA/MAG_SCL aliases are needed.
     """
-    _todo("BEAD-5", "patch_variant_h")
+    print("  Skipped variant.h: upstream already defines PIN_WIRE1_SDA/SCL")
 
 
 def patch_variant_cpp(dry_run=False):
-    """Add explicit Wire1 instantiation if BSP doesn't auto-create it.
+    """No-op: Adafruit nRF52 BSP auto-creates Wire1 from PIN_WIRE1_* defines.
 
-    Conditional — implementer must first verify whether the Adafruit nRF52
-    BSP auto-creates Wire1 from PIN_WIRE1_* defines (compare to other
-    nRF52 variants with WIRE_INTERFACES_COUNT=2). If not, fill in.
-    Implemented by BEAD-5. See TDD §8.
+    BEAD-5 finding: no nRF52 variant in upstream explicitly instantiates
+    Wire1 in variant.cpp despite multiple variants having
+    WIRE_INTERFACES_COUNT=2 (heltec_mesh_node_t114, t096, t114-inkhud).
+    The framework (FrameworkArduino/Wire.cpp) constructs Wire1 from the
+    PIN_WIRE1_* macros at static initialization time.
     """
-    _todo("BEAD-5", "patch_variant_cpp")
+    print("  Skipped variant.cpp: BSP auto-creates Wire1")
 
 
 def patch_portnums_proto(dry_run=False):

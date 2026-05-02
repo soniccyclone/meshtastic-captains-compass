@@ -508,33 +508,24 @@ These generated files are produced fresh in every container run; they are *not* 
 
 ## 8. Variant Patch
 
-Two upstream files. Both edits are applied by `apply.py`.
+**BEAD-5 finding (2026-05-02): no patch required.**
 
-**File 1:** `variants/nrf52840/heltec_mesh_node_t114/variant.h`
-
-Insert the following block at an anchor near the existing GPIO-defines section (final anchor chosen in BEAD-5):
+The upstream T114 variant.h is already correctly configured for an external QMC5883L on TWI1:
 
 ```c
-// captains-compass: external QMC5883L magnetometer on TWI1
-#define MAG_SDA                (13)   // P0.13
-#define MAG_SCL                (16)   // P0.16
-#define WIRE_INTERFACES_COUNT    2
-#define WIRE1_INTERFACES_COUNT   1
-#define PIN_WIRE1_SDA          MAG_SDA
-#define PIN_WIRE1_SCL          MAG_SCL
+// variants/nrf52840/heltec_mesh_node_t114/variant.h
+#define WIRE_INTERFACES_COUNT 2          // line 99
+#define PIN_WIRE1_SDA (0 + 16)            // line 109 — P0.16
+#define PIN_WIRE1_SCL (0 + 13)            // line 110 — P0.13
 ```
 
-**File 2 (conditional):** `variants/nrf52840/heltec_mesh_node_t114/variant.cpp`
+And the Adafruit nRF52 BSP auto-creates `Wire1` from those defines at static init time. Verified by `grep TwoWire Wire1` across all `variants/nrf52840/*/variant.cpp` — no nRF52 variant explicitly instantiates Wire1, including the three T114-family variants with `WIRE_INTERFACES_COUNT=2` (heltec_mesh_node_t114, t096, t114-inkhud).
 
-The Adafruit nRF52 BSP *may* auto-create `Wire1` when `PIN_WIRE1_SDA` / `PIN_WIRE1_SCL` are defined and `WIRE_INTERFACES_COUNT == 2`. **Verify before patching:** read `variant.cpp` and check whether other nRF52 variants with `WIRE_INTERFACES_COUNT=2` instantiate Wire1 manually or rely on the BSP. If manual instantiation is needed, append:
+`patches/apply.py` keeps `patch_variant_h` and `patch_variant_cpp` as documented no-ops so that future readers understand we deliberately don't patch these files; if a future upstream change ever drops `PIN_WIRE1_*` from variant.h, the Magnetometer driver's `Wire1.begin()` will fail at runtime, prompting us to add a real patch then.
 
-```c
-// captains-compass: explicit Wire1 instantiation
-TwoWire Wire1(NRF_TWIM1, NRF_TWIS1, SPIM1_SPIS1_TWIM1_TWIS1_SPI1_TWI1_IRQn,
-              PIN_WIRE1_SDA, PIN_WIRE1_SCL);
-```
+**Wiring:** QMC5883L SDA → P0.16, SCL → P0.13 (per upstream variant.h). The original PRD said the opposite; trust upstream.
 
-**Verification after both edits:** firmware compiles for `heltec_mesh_node_t114`. `Wire1.begin()` returns without error. `Wire1.beginTransmission(0x0D)` / `Wire1.endTransmission()` returns 0 (ACK) when QMC5883L is wired.
+**Verification on real hardware:** firmware compiles for `heltec-mesh-node-t114` (already confirmed by BEAD-2). `Wire1.beginTransmission(0x0D)` / `Wire1.endTransmission()` returns 0 (ACK) when QMC5883L is wired — verified at BEAD-7.
 
 ---
 

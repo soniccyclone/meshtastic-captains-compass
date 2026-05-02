@@ -28,7 +28,7 @@ The feature has to be invisible when not in use. A user who never activates Comp
 |---|---|
 | MCU | nRF52840 |
 | Onboard I2C (TWI0) | PCF8563TS RTC on P0.26/P0.27 — not exposed, do not touch |
-| External I2C bus | TWI1, SDA=P0.13, SCL=P0.16 (exposed header, confirmed free on Rev 2.0) |
+| External I2C bus | TWI1, SDA=P0.16, SCL=P0.13 (per upstream variant.h `PIN_WIRE1_SDA/SCL`; exposed header, confirmed free on Rev 2.0) |
 | Magnetometer | QMC5883L only (I2C addr 0x0D). No HMC5883L support — do not attempt chip detection fallback |
 | Display | SSD1306-compatible 128x64 OLED via existing Meshtastic Screen driver |
 | Input | Single button (UP/DOWN/SELECT via existing InputBroker) |
