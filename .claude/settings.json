@@ -6,7 +6,11 @@
       "WebFetch(*)",
       "WebSearch(*)",
       "Bash(gh issue *)",
-      "Bash(gh api *)"
+      "Bash(gh api *)",
+      "Read(//home/nathan/code-stuff/linux-development-environment/**)",
+      "Bash(podman images *)",
+      "Bash(podman ps *)",
+      "Bash(podman run *)"
     ],
     "deny": [],
     "additionalDirectories": [
