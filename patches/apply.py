@@ -159,16 +159,56 @@ def patch_modules_cpp(dry_run=False):
     print(f"  Patched {path}")
 
 
-def patch_screen_cpp(dry_run=False):
-    """Add 'Compass' entry to the home banner menu in MenuHandler.cpp.
+def patch_menuhandler_h(dry_run=False):
+    """Extend graphics::menuHandler::screenMenus with three Compass values.
 
-    Three coordinated substitutions in src/graphics/draw/MenuHandler.cpp:
+    Why: upstream's banner-menu re-entrance contract forbids calling
+    `screen->showOverlayBanner(...)` from inside another banner's callback
+    (NotificationRenderer assumes the previous banner is closing). Every
+    upstream nested-menu transition uses `menuQueue = X` and lets the next
+    frame's `handleMenuSwitch` dispatch. We follow the same pattern; that
+    requires three queue values:
+
+      * compass_menu             — open the Compass root submenu
+      * compass_treasure_picker  — open the nested treasure-list submenu
+      * compass_toast            — show a deferred toast
+                                   (CompassMenu::pendingToast holds the text)
+
+    Anchor: the last entry of the enum (`DisplayUnits` followed by a
+    closing brace). Stable: the enum is only appended-to upstream and
+    `DisplayUnits` is the current tail at v2.7.15.567b8ea.
+    """
+    _apply(
+        "src/graphics/draw/MenuHandler.h",
+        anchor="        DisplayUnits\n    };",
+        replacement=(
+            "        DisplayUnits,\n"
+            f"        /* {MARKER} */\n"
+            "        compass_menu,\n"
+            "        compass_treasure_picker,\n"
+            "        compass_toast\n"
+            "    };"
+        ),
+        dry_run=dry_run,
+        position="replace",
+    )
+
+
+def patch_screen_cpp(dry_run=False):
+    """Wire the home banner-menu's `Compass` entry to push the Compass submenu.
+
+    Six coordinated substitutions in src/graphics/draw/MenuHandler.cpp:
       1. enum optionsNumbers — add Compass before enumEnd
       2. options array — append Compass entry after the Position branch
       3. bannerCallback lambda — add 'else if (selected == Compass)' case
-    Plus an #include for CompassModule.h.
+         that QUEUES the Compass root submenu (does NOT directly call any
+         CompassModule send method — that was Bug 1 in issue #9).
+      4. handleMenuSwitch — three new cases dispatching the queued values
+         to CompassMenu::buildRoot / buildTreasures / showPendingToast.
+      5. #include "modules/CompassModule/CompassModule.h"
+      6. #include "modules/CompassModule/CompassMenu.h"
 
-    All four are idempotency-checked via the MARKER scan at function entry;
+    All six are idempotency-checked via the MARKER scan at function entry;
     once patched, every subsequent call is a no-op.
     """
     path = "src/graphics/draw/MenuHandler.cpp"
@@ -181,9 +221,12 @@ def patch_screen_cpp(dry_run=False):
     cb_anchor     = ("        } else if (selected == Freetext) {\n"
                      "            cannedMessageModule->LaunchFreetextWithDestination(NODENUM_BROADCAST);\n"
                      "        }")
+    switch_anchor = ("    case throttle_message:\n"
+                     "        screen->showSimpleBanner(\"Too Many Attempts\\nTry again in 60 seconds.\", 5000);\n"
+                     "        break;")
     include_anchor = '#include "MenuHandler.h"'
 
-    for a in (enum_anchor, array_anchor, cb_anchor, include_anchor):
+    for a in (enum_anchor, array_anchor, cb_anchor, switch_anchor, include_anchor):
         if a not in text:
             sys.exit(f"ERROR: anchor missing in {path}: {a!r}")
     if dry_run:
@@ -195,9 +238,6 @@ def patch_screen_cpp(dry_run=False):
         f"Sleep, Compass, enumEnd  /* {MARKER} */",
     )
     text = text.replace(enum_anchor, enum_replacement, 1)
-    # The Position case in v2.7.15 dispatches via injectInputEvent rather than
-    # service->trySendPosition. We don't depend on that detail; we just add a
-    # new Compass case to the lambda after the Freetext case.
 
     # 2. options array: append after Position branch
     array_replacement = (
@@ -208,21 +248,41 @@ def patch_screen_cpp(dry_run=False):
     )
     text = text.replace(array_anchor, array_replacement, 1)
 
-    # 3. bannerCallback lambda: add Compass case after Freetext
+    # 3. bannerCallback lambda: add Compass case after Freetext.
+    # Sets menuQueue and returns; the next frame's handleMenuSwitch builds
+    # the submenu via CompassMenu::buildRoot(). Direct-call to
+    # showOverlayBanner from a callback would race the NotificationRenderer
+    # cleanup of the home banner — see TDD §3.5.
     cb_replacement = (
         cb_anchor + " "
         f"/* {MARKER} */ else if (selected == Compass) {{\n"
-        "            if (CompassModule::instance) {\n"
-        "                CompassModule::instance->sendCapabilityQuery();\n"
-        "            }\n"
+        "            menuQueue = compass_menu;\n"
         "        }"
     )
     text = text.replace(cb_anchor, cb_replacement, 1)
 
-    # 4. include
+    # 4. handleMenuSwitch cases: dispatch the three queue values.
+    switch_replacement = (
+        switch_anchor + "\n"
+        f"    /* {MARKER} */\n"
+        "    case compass_menu:\n"
+        "        compass::CompassMenu::buildRoot();\n"
+        "        break;\n"
+        "    case compass_treasure_picker:\n"
+        "        compass::CompassMenu::buildTreasures();\n"
+        "        break;\n"
+        "    case compass_toast:\n"
+        "        compass::CompassMenu::showPendingToast();\n"
+        "        break;"
+    )
+    text = text.replace(switch_anchor, switch_replacement, 1)
+
+    # 5/6. includes (CompassModule.h for instance ptr, CompassMenu.h for the
+    # static dispatch entry points).
     include_replacement = (
         include_anchor + f'\n// {MARKER}\n'
-        '#include "modules/CompassModule/CompassModule.h"'
+        '#include "modules/CompassModule/CompassModule.h"\n'
+        '#include "modules/CompassModule/CompassMenu.h"'
     )
     text = text.replace(include_anchor, include_replacement, 1)
 
@@ -239,6 +299,7 @@ PATCHES = [
     patch_variant_cpp,
     patch_portnums_proto,
     patch_modules_cpp,
+    patch_menuhandler_h,
     patch_screen_cpp,
 ]
 
