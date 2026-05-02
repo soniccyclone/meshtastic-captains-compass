@@ -8,3 +8,7 @@
 vendor/
 output/
 .pio/
+
+# Python bytecode
+__pycache__/
+*.pyc
