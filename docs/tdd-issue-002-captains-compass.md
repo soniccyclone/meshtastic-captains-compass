@@ -208,6 +208,8 @@ GitHub's `uploadpack.allowReachableSHA1InWant` is enabled, so `git fetch --depth
 
 ### 4.2 Dockerfile (multi-stage)
 
+**Host architecture is intentionally not pinned.** No `--platform` override anywhere in the Dockerfile, the Makefile, or the CI workflows. Docker resolves the base image to the host arch: arm64 on Apple Silicon dev machines, amd64 on `ubuntu-latest` GitHub Actions runners. Both hosts cross-compile to ARM Cortex-M4F via `arm-none-eabi-gcc`, so the resulting `firmware.uf2` is the same regardless of where it was built. This trades local↔CI image identity for native build performance on each side; layer caches are naturally separate (cache keys include arch). Do not add `--platform=linux/amd64` "for consistency" — it would silently force Rosetta translation on Apple Silicon and erase the speedup.
+
 `docker/Dockerfile`:
 
 ```dockerfile
