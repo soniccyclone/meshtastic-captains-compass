@@ -274,8 +274,8 @@ message CompassPacket {
 ```
 
 **Routing:**
-- `hop_limit=0` — PAIR_REQUEST, PAIR_ACCEPT, PAIR_CONFIRM, PAIR_REJECT (proximity-required; no mesh relay)
-- `hop_limit=3` — POSITION_UPDATE, SESSION_END, CAPABILITY_ADV (mesh-routed after pairing)
+- `hop_limit=0` — PAIR_REQUEST, PAIR_ACCEPT, PAIR_CONFIRM, PAIR_REJECT, CAPABILITY_ADV (proximity-required; no mesh relay)
+- `hop_limit=3` — POSITION_UPDATE, SESSION_END (mesh-routed after pairing)
 
 **Update interval:** 30s default, stored in NVS, configurable via **Menu → Compass → Settings → Update Interval** (10s / 30s / 60s / 120s).
 
@@ -313,7 +313,7 @@ M variants/nrf52840/heltec_mesh_node_t114/variant.cpp (+TwoWire Wire1(NRF_TWIM1,
 ## 10. Decisions
 
 1. **NVS namespace:** Use `compass`. Meshtastic uses `prefs`; a dedicated namespace avoids key collisions and makes wipe/reset straightforward.
-2. **CAPABILITY_ADV timing:** Broadcast on boot, then repeat on a slow periodic interval (every 30 minutes). Mirrors how Meshtastic handles its own node info packets. Keeps the node list current without hammering the mesh; entering the Compass menu triggers an immediate additional broadcast to solicit fresh responses.
+2. **CAPABILITY_ADV timing:** Broadcast only when the user enters the pairing screen, `hop_limit=0`. Since pairing requires physical proximity, there is no need for a mesh-wide or periodic advertisement — only adjacent nodes matter. The node list is built from responses received after entering the screen.
 3. **Stationary update suppression:** If the Desire's GPS position has not changed beyond GPS noise floor, suppress position updates for up to **5 minutes**. After 5 minutes, send an update regardless (keepalive). Resume normal 30s interval as soon as movement is detected.
 4. **Buzzer:** No buzzer support in v0.1. There is an outstanding power draw issue with the T114's buzzer circuit that must be resolved first. "Arrived at Treasure" notification is visual only (arrow replaced with `YOU'RE HERE`, display stays on).
 
