@@ -103,9 +103,28 @@ def patch_variant_cpp(dry_run=False):
 def patch_portnums_proto(dry_run=False):
     """Add COMPASS_APP = 300 to meshtastic_PortNum enum.
 
-    Implemented by BEAD-6. See TDD §9.
+    Anchor: 'MAX = 511;' — the enum's max marker, last entry before the
+    closing brace. Stable: this line is the conventional end-of-enum
+    marker that upstream maintains for range-checking, unlikely to move.
     """
-    _todo("BEAD-6", "patch_portnums_proto")
+    _apply(
+        "protobufs/meshtastic/portnums.proto",
+        anchor="MAX = 511;",
+        replacement=(
+            "/*\n"
+            "   * Captain's Compass — direction-finding module.\n"
+            "   * See https://github.com/soniccyclone/meshtastic-captains-compass\n"
+            f"   * {MARKER} private-app range; not registered upstream.\n"
+            "   */\n"
+            "  COMPASS_APP = 300;\n\n"
+            "  /*\n"
+            "   * Currently we limit port nums to no higher than this value\n"
+            "   */\n"
+            "  MAX = 511;"
+        ),
+        dry_run=dry_run,
+        position="replace",
+    )
 
 
 def patch_modules_cpp(dry_run=False):

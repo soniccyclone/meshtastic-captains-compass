@@ -19,9 +19,20 @@ rsync -a /overlay/ /firmware-src/
 echo "=== Apply patches (modifications) ==="
 python3 /patches/apply.py
 
-# nanopb regen is conditional on overlay containing .proto files.
-# Stock upstream commits its generated .pb.h/.pb.cpp; only when we add
-# compass.proto (BEAD-6) do we need to regenerate. Logic added in BEAD-6.
+echo "=== Regenerate nanopb protos ==="
+# Equivalent to upstream's bin/regen-protos.sh, but uses system protoc +
+# pip-installed nanopb (which runs natively on arm64) instead of upstream's
+# x86-only nanopb-0.4.9 prebuilt binary. Regenerates ALL .pb.h/.pb.cpp from
+# .proto sources so portnums.proto patch + compass.proto overlay both
+# propagate; other generated files remain functionally identical.
+# NANOPB_PROTO_INCLUDE is set in the Dockerfile and points at nanopb's
+# bundled google/protobuf/*.proto well-known files.
+( cd protobufs && \
+    protoc --experimental_allow_proto3_optional \
+           --nanopb_out="-S.cpp:../src/mesh/generated/" \
+           -I=. \
+           -I="${NANOPB_PROTO_INCLUDE}" \
+           meshtastic/*.proto )
 
 echo "=== Build heltec-mesh-node-t114 ==="
 pio run --environment heltec-mesh-node-t114

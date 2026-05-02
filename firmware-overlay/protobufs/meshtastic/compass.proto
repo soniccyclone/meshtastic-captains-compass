@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package meshtastic;
+
+option csharp_namespace = "Meshtastic.Protobufs";
+option go_package = "github.com/meshtastic/go/generated";
+option java_outer_classname = "Compass";
+option java_package = "org.meshtastic.proto";
+option swift_prefix = "";
+
+/*
+ * Captain's Compass — message types exchanged on COMPASS_APP port (300).
+ * See docs/tdd-issue-002-captains-compass.md §9.
+ */
+enum CompassMsgType {
+  POSITION_UPDATE  = 0;
+  PAIR_REQUEST     = 1;
+  PAIR_ACCEPT      = 2;
+  PAIR_CONFIRM     = 3;
+  PAIR_REJECT      = 4;
+  SESSION_END      = 5;
+  CAPABILITY_QUERY = 6;
+  CAPABILITY_ADV   = 7;
+}
+
+message CompassPacket {
+  CompassMsgType type = 1;
+  sint32 latitude_i   = 2;   // WGS84 * 1e7, only in POSITION_UPDATE
+  sint32 longitude_i  = 3;   // WGS84 * 1e7, only in POSITION_UPDATE
+  uint32 time         = 4;   // Unix epoch seconds
+  uint32 battery_pct  = 5;   // 0-100, optional
+}

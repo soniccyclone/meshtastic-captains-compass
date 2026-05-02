@@ -14,11 +14,17 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PATH="/opt/pio-venv/bin:${PATH}"
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git python3 python3-pip python3-venv ca-certificates curl \
-      libusb-1.0-0 rsync \
+      libusb-1.0-0 rsync protobuf-compiler \
  && rm -rf /var/lib/apt/lists/*
 RUN python3 -m venv /opt/pio-venv \
  && /opt/pio-venv/bin/pip install --upgrade pip \
- && /opt/pio-venv/bin/pip install platformio
+ && /opt/pio-venv/bin/pip install platformio nanopb
+# Stash nanopb's bundled google/protobuf/*.proto include dir for the
+# entrypoint's regen step. Avoids hardcoding the python3.X path.
+ENV NANOPB_PROTO_INCLUDE=/opt/pio-venv/share/nanopb-proto
+RUN mkdir -p /opt/pio-venv/share \
+ && cp -r /opt/pio-venv/lib/python*/site-packages/nanopb/generator/proto "${NANOPB_PROTO_INCLUDE}" \
+ && test -f "${NANOPB_PROTO_INCLUDE}/google/protobuf/descriptor.proto"
 
 # ---------------------------------------------------------------------------
 # Stage 2: pinned firmware — clone + checkout SHA + install pio platform.
