@@ -1,7 +1,0 @@
-# ralph scratch dir (iteration logs, DONE sentinel, generated specs)
-.ralph/
-
-# editor / OS noise
-.DS_Store
-*.swp
-*~
