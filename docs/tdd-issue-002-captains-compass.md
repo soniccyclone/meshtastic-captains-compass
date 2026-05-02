@@ -236,7 +236,7 @@ RUN mkdir -p /firmware-src \
  && git fetch --depth=1 origin ${FIRMWARE_SHA} \
  && git checkout -q FETCH_HEAD \
  && git submodule update --init --recursive --depth=1 \
- && pio pkg install --environment heltec_mesh_node_t114
+ && pio pkg install --environment heltec-mesh-node-t114
 
 # Stage 3: builder — overlay + patcher + entrypoint.
 # Invalidates on every iteration of our patches.
@@ -280,17 +280,16 @@ rsync -a /overlay/ /firmware-src/
 echo "=== Apply patches (modifications) ==="
 python3 /patches/apply.py
 
-echo "=== Regenerate nanopb ==="
-# Confirm exact upstream script name in BEAD-2; current candidates:
-#   bin/regen-protos.sh   bin/build-all.sh   bin/generate-proto.sh
-bin/regen-protos.sh
+# nanopb regen is conditional on overlay containing .proto files.
+# Stock upstream commits its generated .pb.h/.pb.cpp; only when we add
+# compass.proto (BEAD-6) do we need to regenerate. Logic added in BEAD-6.
 
-echo "=== Build heltec_mesh_node_t114 ==="
-pio run --environment heltec_mesh_node_t114
+echo "=== Build heltec-mesh-node-t114 ==="
+pio run --environment heltec-mesh-node-t114
 
 echo "=== Emit artifact ==="
 mkdir -p /output
-cp .pio/build/heltec_mesh_node_t114/firmware.uf2 /output/firmware.uf2
+cp .pio/build/heltec-mesh-node-t114/firmware.uf2 /output/firmware.uf2
 echo "Done: /output/firmware.uf2"
 ```
 
