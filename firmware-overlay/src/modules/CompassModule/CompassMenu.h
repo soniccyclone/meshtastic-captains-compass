@@ -33,6 +33,8 @@ public:
     static void buildRoot();
     static void buildTreasures();
     static void showPendingToast();
+    static void buildDiscoveryResults();
+    static void buildPairIncoming();
 
     // Set by callbacks before queueing `compass_toast`. Lives across one
     // frame (set in callback, read in dispatch case, never both).

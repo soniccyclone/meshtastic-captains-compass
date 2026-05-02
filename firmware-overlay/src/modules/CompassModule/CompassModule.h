@@ -81,6 +81,9 @@ private:
     void handlePositionUpdate(const meshtastic_MeshPacket &mp, const meshtastic_CompassPacket &pkt);
     void handleSessionEnd(const meshtastic_MeshPacket &mp);
 
+    bool _discoveryBannerQueued = false;
+    bool _pendingPairBanner = false;
+
     // Tick helpers
     int32_t tickTracked();
     int32_t tickTracking();
