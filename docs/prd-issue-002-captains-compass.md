@@ -249,7 +249,7 @@ The feature has to be invisible when not in use. A user who never activates Comp
 
 ## 7. Protocol Specification
 
-**Port:** `meshtastic_PortNum_COMPASS_APP` (register with Meshtastic upstream; use reserved range 512–1023 for prototyping)
+**Port:** `meshtastic_PortNum_COMPASS_APP = 300` — chosen from Meshtastic's 256–511 private-app range. Not registered upstream; if Captain's Compass ships beyond this fork, propose a stable allocation against `meshtastic/protobufs#portnums.proto`. (Issue #9 reconciled the prose with the proto; see `docs/tdd-issue-009-compass-submenu.md` §5.)
 
 **Message types** (`compass.proto`):
 
