@@ -10,7 +10,9 @@
       "Read(//home/nathan/code-stuff/linux-development-environment/**)",
       "Bash(podman images *)",
       "Bash(podman ps *)",
-      "Bash(podman run *)"
+      "Bash(podman run *)",
+      "Bash(podman logs *)",
+      "Bash(podman inspect *)"
     ],
     "deny": [],
     "additionalDirectories": [
