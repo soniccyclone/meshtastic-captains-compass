@@ -1,0 +1,104 @@
+name: PR Build T114 Firmware
+
+# Per-PR prerelease for QA flashing. Triggers on PRs touching the build
+# surface; comments the release link on the PR.
+# See docs/tdd-issue-002-captains-compass.md §5.2.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'firmware-overlay/**'
+      - 'patches/**'
+      - 'docker/**'
+      - 'meshtastic-firmware-pin'
+      - '.github/workflows/pr-build-t114.yml'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: pr-build-t114-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  rc-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read pinned firmware SHA
+        id: pin
+        run: echo "sha=$(cat meshtastic-firmware-pin)" >> "$GITHUB_OUTPUT"
+
+      - name: Compute RC tag
+        id: tag
+        run: |
+          TAG="v$(date -u +%Y.%m.%d)-pr${{ github.event.pull_request.number }}.${{ github.run_number }}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "name=Captain's Compass RC $TAG (PR #${{ github.event.pull_request.number }})" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build cc-builder image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          load: true
+          tags: cc-builder:pr
+          build-args: |
+            FIRMWARE_SHA=${{ steps.pin.outputs.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Compile T114 firmware
+        run: |
+          mkdir -p output
+          docker run --rm -v "$PWD/output:/output" cc-builder:pr
+
+      - name: Create GitHub pre-release
+        id: release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ steps.tag.outputs.name }}
+          prerelease: true
+          target_commitish: ${{ github.event.pull_request.head.sha }}
+          body: |
+            Automatic release candidate for [PR #${{ github.event.pull_request.number }}](${{ github.event.pull_request.html_url }}).
+
+            Built against meshtastic/firmware [`${{ steps.pin.outputs.sha }}`](https://github.com/meshtastic/firmware/commit/${{ steps.pin.outputs.sha }}) at this PR's HEAD (${{ github.event.pull_request.head.sha }}).
+
+            **Flash `firmware.uf2` to a T114:**
+            1. Double-press reset on the T114 — a USB drive (`T114_BOOT`) appears.
+            2. Drag `firmware.uf2` onto that drive.
+            3. The device flashes and reboots into the PR's patched firmware.
+
+            This tag persists after the PR merges or closes; not auto-cleaned.
+          files: |
+            output/firmware.uf2
+            output/firmware-heltec-mesh-node-t114-*.uf2
+
+      - name: Comment on PR with RC link
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = '${{ steps.tag.outputs.tag }}';
+            const releaseUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/releases/tag/${tag}`;
+            const body = [
+              `**RC build:** [\`${tag}\`](${releaseUrl})`,
+              ``,
+              `Download \`firmware.uf2\` from the release page above and flash to a T114 (double-press reset, drop onto \`T114_BOOT\` drive).`,
+            ].join('\n');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });

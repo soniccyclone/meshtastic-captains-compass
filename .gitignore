@@ -3,3 +3,12 @@
 .dolt/
 *.db
 .beads-credential-key
+
+# Build pipeline
+vendor/
+output/
+.pio/
+
+# Python bytecode
+__pycache__/
+*.pyc
