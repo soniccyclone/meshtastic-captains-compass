@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "meshtastic_captains_compass",
+  "project_id": "a7a1dd50-c3eb-47ec-95a9-05c259f7a7fe"
+}
