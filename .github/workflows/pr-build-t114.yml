@@ -31,9 +31,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Read pinned firmware SHA
+      - name: Read pinned firmware ref
         id: pin
-        run: echo "sha=$(cat meshtastic-firmware-pin)" >> "$GITHUB_OUTPUT"
+        run: echo "ref=$(cat meshtastic-firmware-pin)" >> "$GITHUB_OUTPUT"
 
       - name: Compute RC tag
         id: tag
@@ -53,7 +53,7 @@ jobs:
           load: true
           tags: cc-builder:pr
           build-args: |
-            FIRMWARE_SHA=${{ steps.pin.outputs.sha }}
+            FIRMWARE_REF=${{ steps.pin.outputs.ref }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -73,7 +73,7 @@ jobs:
           body: |
             Automatic release candidate for [PR #${{ github.event.pull_request.number }}](${{ github.event.pull_request.html_url }}).
 
-            Built against meshtastic/firmware [`${{ steps.pin.outputs.sha }}`](https://github.com/meshtastic/firmware/commit/${{ steps.pin.outputs.sha }}) at this PR's HEAD (${{ github.event.pull_request.head.sha }}).
+            Built against meshtastic/firmware [`${{ steps.pin.outputs.ref }}`](https://github.com/meshtastic/firmware/tree/${{ steps.pin.outputs.ref }}) at this PR's HEAD (${{ github.event.pull_request.head.sha }}).
 
             **Flash `firmware.uf2` to a T114:**
             1. Double-press reset on the T114 — a USB drive (`T114_BOOT`) appears.
