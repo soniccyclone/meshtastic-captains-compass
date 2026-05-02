@@ -1,0 +1,37 @@
+{
+  "name": "Meshtastic Captain's Compass",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+
+  // Privileged + net=host: needed for USB flashing (UF2/nrfutil) and device access
+  "runArgs": ["--privileged", "--net=host"],
+  "mounts": [
+    "source=/dev,target=/dev,type=bind,consistency=cached"
+  ],
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "platformio.platformio-ide",
+        "ms-vscode.cpptools",
+        "ms-vscode.cpptools-extension-pack",
+        "ms-python.python",
+        "twxs.cmake"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "zsh",
+        "editor.formatOnSave": true,
+        "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools"
+      }
+    }
+  },
+
+  "postCreateCommand": "bash .devcontainer/setup.sh",
+
+  "remoteEnv": {
+    "PATH": "/opt/pio-venv/bin:${PATH}",
+    "PLATFORMIO_CORE_DIR": "/opt/pio/core",
+    "PLATFORMIO_SETTING_ENABLE_TELEMETRY": "No"
+  }
+}
