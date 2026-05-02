@@ -212,6 +212,12 @@ void CompassState::deleteTreasure(uint8_t i) {
     saveTreasuresFile();
 }
 
+// --- Status -----------------------------------------------------------
+
+void CompassState::startStatus() {
+    setState(State::STATUS);
+}
+
 // --- Calibration ------------------------------------------------------
 
 void CompassState::startCalibration() {

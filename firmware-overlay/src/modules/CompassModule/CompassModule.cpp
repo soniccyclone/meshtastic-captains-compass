@@ -247,6 +247,8 @@ int32_t CompassModule::runOnce() {
             return tickTracking();
         case State::TRACKING_TREASURE:
             return 1000;
+        case State::STATUS:
+            return 1000;
     }
     return 1000;
 }

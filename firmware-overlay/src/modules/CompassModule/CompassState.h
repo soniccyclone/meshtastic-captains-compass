@@ -21,6 +21,7 @@ enum class State : uint8_t {
     TRACKING_TREASURE,     // Navigating to a saved waypoint
     SESSION_PAUSED,        // No Desire updates for 5min; backgrounded
     CALIBRATING,           // Magnetometer calibration loop
+    STATUS,                // Read-only status screen (any input dismisses)
 };
 
 struct DiscoveredNode {
@@ -98,6 +99,9 @@ public:
     uint8_t         treasureCount() const { return _treasureCount; }
     const Treasure &treasure(uint8_t i) const { return _treasures[i]; }
     void            deleteTreasure(uint8_t i);
+
+    // Status screen (read-only; transitions to IDLE on any input)
+    void     startStatus();
 
     // Calibration
     void     startCalibration();
