@@ -30,6 +30,11 @@ struct DiscoveredNode {
     int8_t   rssi;          // from last CAPABILITY_ADV
 };
 
+struct SavedDesire {
+    uint32_t nodeNum;
+    char     name[12];  // null-terminated, long name from NodeDB at pair time
+};
+
 struct SessionData {
     uint32_t peerNodeNum;
     char     peerName[12];           // null-terminated
@@ -50,6 +55,7 @@ struct Treasure {
 class CompassState {
 public:
     static constexpr uint8_t  MAX_TREASURES          = 5;
+    static constexpr uint8_t  MAX_SAVED_DESIRES      = 5;
     static constexpr uint8_t  MAX_DISCOVERED_NODES   = 8;
     static constexpr uint32_t DISCOVERY_WINDOW_MS    = 3000;
     static constexpr uint32_t PAIR_TIMEOUT_MS        = 60000;
@@ -69,6 +75,13 @@ public:
     uint8_t               discoveredNodeCount() const { return _discoveredCount; }
     const DiscoveredNode &discoveredNode(uint8_t i) const { return _discovered[i]; }
 
+    // Saved Desires (persistent paired nodes)
+    uint8_t            savedDesireCount() const { return _savedDesireCount; }
+    const SavedDesire &savedDesire(uint8_t i) const { return _savedDesires[i]; }
+    bool               isKnownDesire(uint32_t nodeNum) const;
+    void               saveDesire(uint32_t nodeNum, const char *name);
+    void               deleteDesire(uint8_t i);
+
     // Pairing — Compass side
     void startPairRequest(uint32_t targetNodeNum);
     void onPairAccepted(uint32_t peerNodeNum, const char *peerName);
@@ -78,6 +91,7 @@ public:
     // Pairing — Desire side
     void     onPairRequestReceived(uint32_t initiatorNodeNum);
     void     acceptPair();
+    void     autoAcceptPair(uint32_t initiatorNodeNum, const char *peerName);
     void     rejectPair();
     uint32_t pendingPairNodeNum() const { return _pendingPairNodeNum; }
 
@@ -123,6 +137,7 @@ private:
     static constexpr uint8_t  CAL_SCHEMA_VERSION = 1;
     static constexpr const char *CAL_PATH       = "/compass/cal";
     static constexpr const char *TREASURES_PATH = "/compass/treasures";
+    static constexpr const char *DESIRES_PATH   = "/compass/desires";
     static constexpr const char *SETTINGS_PATH  = "/compass/settings";
 
     State    _state            = State::IDLE;
@@ -137,9 +152,12 @@ private:
 
     SessionData _session = {};
 
-    Treasure _treasures[MAX_TREASURES] = {};
-    uint8_t  _treasureCount   = 0;
-    uint8_t  _activeTreasureIdx = 0xFF;
+    Treasure    _treasures[MAX_TREASURES] = {};
+    uint8_t     _treasureCount   = 0;
+    uint8_t     _activeTreasureIdx = 0xFF;
+
+    SavedDesire _savedDesires[MAX_SAVED_DESIRES] = {};
+    uint8_t     _savedDesireCount = 0;
 
     int16_t  _calMinX = 0, _calMaxX = 0;
     int16_t  _calMinY = 0, _calMaxY = 0;
@@ -159,6 +177,8 @@ private:
     void saveCalibrationFile();
     void loadTreasuresFile();
     void saveTreasuresFile();
+    void loadDesiresFile();
+    void saveDesiresFile();
     void loadSettingsFile();
     void saveSettingsFile();
 };

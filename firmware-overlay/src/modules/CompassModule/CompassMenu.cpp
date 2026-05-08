@@ -26,6 +26,7 @@ void CompassMenu::buildRoot() {
     enum opt {
         Back,
         FindDesire,
+        PairNewDevice,
         Treasures,
         SaveTreasure,
         Calibrate,
@@ -36,11 +37,11 @@ void CompassMenu::buildRoot() {
     };
 
     static const char *labels[enumEnd] = {
-        "Back", "Find Desire", "Treasures", "Save Treasure",
+        "Back", "Find Desire", "Pair New Device", "Treasures", "Save Treasure",
         "Calibrate", "End Session", "Status", "Settings",
     };
     static int enums[enumEnd] = {
-        Back, FindDesire, Treasures, SaveTreasure,
+        Back, FindDesire, PairNewDevice, Treasures, SaveTreasure,
         Calibrate, EndSession, Status, Settings,
     };
 
@@ -52,6 +53,9 @@ void CompassMenu::buildRoot() {
     opts.bannerCallback = [](int selected) -> void {
         switch (selected) {
             case FindDesire:
+                graphics::menuHandler::menuQueue = graphics::menuHandler::compass_saved_desires;
+                break;
+            case PairNewDevice:
                 if (CompassModule::instance) CompassModule::instance->sendCapabilityQuery();
                 break;
             case Treasures:
@@ -162,6 +166,127 @@ void CompassMenu::showPendingToast() {
     const char *msg = CompassMenu::pendingToast ? CompassMenu::pendingToast : "";
     CompassMenu::pendingToast = nullptr;
     if (screen) screen->showSimpleBanner(msg, 2000);
+}
+
+void CompassMenu::buildSavedDesires() {
+    if (!CompassModule::instance) return;
+    CompassState *st = CompassModule::instance->state();
+    const uint8_t count = st->savedDesireCount();
+
+    static const char *labels[CompassState::MAX_SAVED_DESIRES + 1];
+    static int enums[CompassState::MAX_SAVED_DESIRES + 1];
+    labels[0] = "Back"; enums[0] = 0;
+
+    uint8_t entryCount;
+    if (count == 0) {
+        labels[1] = "(no saved desires — use Pair New Device)";
+        enums[1] = -1;
+        entryCount = 2;
+    } else {
+        for (uint8_t i = 0; i < count; ++i) {
+            labels[i+1] = st->savedDesire(i).name;
+            enums[i+1] = static_cast<int>(i) + 1;
+        }
+        entryCount = static_cast<uint8_t>(count + 1);
+    }
+
+    graphics::BannerOverlayOptions opts;
+    opts.message = "Find Desire";
+    opts.optionsArrayPtr = labels;
+    opts.optionsEnumPtr = enums;
+    opts.optionsCount = entryCount;
+    opts.bannerCallback = [](int selected) -> void {
+        if (!CompassModule::instance) return;
+        if (selected <= 0) return;
+        const uint8_t idx = static_cast<uint8_t>(selected - 1);
+        CompassState *st = CompassModule::instance->state();
+        if (idx >= st->savedDesireCount()) return;
+        const SavedDesire &desire = st->savedDesire(idx);
+        static char waitMsg[24];
+        snprintf(waitMsg, sizeof(waitMsg), "Finding %s...",
+                 desire.name[0] ? desire.name : "node");
+        CompassModule::instance->sendPairRequest(desire.nodeNum);
+        CompassMenu::pendingToast = waitMsg;
+        graphics::menuHandler::menuQueue = graphics::menuHandler::compass_toast;
+    };
+    if (screen) screen->showOverlayBanner(opts);
+}
+
+void CompassMenu::buildDiscoveryResults() {
+    if (!CompassModule::instance) return;
+    CompassState *st = CompassModule::instance->state();
+    const uint8_t count = st->discoveredNodeCount();
+    static const char *labels[CompassState::MAX_DISCOVERED_NODES + 1];
+    static int enums[CompassState::MAX_DISCOVERED_NODES + 1];
+    labels[0] = "Back"; enums[0] = 0;
+    uint8_t entryCount;
+    if (count == 0) {
+        labels[1] = "(no nodes found)"; enums[1] = -1; entryCount = 2;
+    } else {
+        for (uint8_t i = 0; i < count; ++i) {
+            labels[i+1] = st->discoveredNode(i).shortName;
+            enums[i+1] = static_cast<int>(i) + 1;
+        }
+        entryCount = static_cast<uint8_t>(count + 1);
+    }
+    graphics::BannerOverlayOptions opts;
+    opts.message = "Pick Desire";
+    opts.optionsArrayPtr = labels;
+    opts.optionsEnumPtr = enums;
+    opts.optionsCount = entryCount;
+    opts.bannerCallback = [](int selected) -> void {
+        if (!CompassModule::instance) return;
+        if (selected <= 0) { CompassModule::instance->state()->endSession(); return; }
+        const uint8_t idx = static_cast<uint8_t>(selected - 1);
+        CompassState *st = CompassModule::instance->state();
+        if (idx >= st->discoveredNodeCount()) return;
+        static char waitMsg[24];
+        const char *sn = st->discoveredNode(idx).shortName;
+        snprintf(waitMsg, sizeof(waitMsg), "Waiting for %s...", sn[0] ? sn : "node");
+        CompassModule::instance->sendPairRequest(st->discoveredNode(idx).nodeNum);
+        CompassMenu::pendingToast = waitMsg;
+        graphics::menuHandler::menuQueue = graphics::menuHandler::compass_toast;
+    };
+    if (screen) screen->showOverlayBanner(opts);
+}
+
+void CompassMenu::buildPairIncoming() {
+    if (!CompassModule::instance) return;
+    CompassState *st = CompassModule::instance->state();
+    if (st->getState() != compass::State::PAIR_INCOMING) return;
+    const meshtastic_NodeInfoLite *info =
+        nodeDB ? nodeDB->getMeshNode(st->pendingPairNodeNum()) : nullptr;
+    const char *name = (info && info->has_user) ? info->user.long_name : "??";
+    static char bannerTitle[32];
+    snprintf(bannerTitle, sizeof(bannerTitle), "Pair: %.20s", name);
+    static const char *labels[] = {"Accept", "Reject"};
+    static int enums[] = {1, 2};
+    static uint32_t capturedNodeNum;
+    static char capturedName[32];
+    capturedNodeNum = st->pendingPairNodeNum();
+    snprintf(capturedName, sizeof(capturedName), "%.31s", name);
+    graphics::BannerOverlayOptions opts;
+    opts.message = bannerTitle;
+    opts.optionsArrayPtr = labels;
+    opts.optionsEnumPtr = enums;
+    opts.optionsCount = 2;
+    opts.bannerCallback = [](int selected) -> void {
+        if (!CompassModule::instance) return;
+        CompassState *st = CompassModule::instance->state();
+        if (st->getState() != compass::State::PAIR_INCOMING) return;
+        if (selected == 1) {
+            st->acceptPair();
+            st->saveDesire(capturedNodeNum, capturedName);
+            CompassModule::instance->sendPairAccept(capturedNodeNum);
+            CompassMenu::pendingToast = "Accepted. Being tracked.";
+        } else {
+            st->rejectPair();
+            CompassModule::instance->sendPairReject(capturedNodeNum);
+            CompassMenu::pendingToast = "Request rejected.";
+        }
+        graphics::menuHandler::menuQueue = graphics::menuHandler::compass_toast;
+    };
+    if (screen) screen->showOverlayBanner(opts);
 }
 
 } // namespace compass

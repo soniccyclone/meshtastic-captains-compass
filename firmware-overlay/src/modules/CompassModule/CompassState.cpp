@@ -14,6 +14,7 @@ namespace compass {
 namespace {
 
 constexpr uint8_t  TREASURES_SCHEMA_VERSION = 1;
+constexpr uint8_t  DESIRES_SCHEMA_VERSION   = 1;
 constexpr uint8_t  SETTINGS_SCHEMA_VERSION  = 1;
 
 struct CalRecord {
@@ -23,6 +24,11 @@ struct CalRecord {
 };
 
 struct TreasuresHeader {
+    uint8_t version;
+    uint8_t count;
+};
+
+struct DesiresHeader {
     uint8_t version;
     uint8_t count;
 };
@@ -55,6 +61,7 @@ void CompassState::begin() {
     _stateEnteredMs = millis();
     loadCalibrationFile();
     loadTreasuresFile();
+    loadDesiresFile();
     loadSettingsFile();
 }
 
@@ -146,6 +153,52 @@ void CompassState::acceptPair() {
 void CompassState::rejectPair() {
     _pendingPairNodeNum = 0;
     setState(State::IDLE);
+}
+
+void CompassState::autoAcceptPair(uint32_t initiatorNodeNum, const char *peerName) {
+    _session.peerNodeNum = initiatorNodeNum;
+    clampString(_session.peerName, sizeof(_session.peerName), peerName);
+    _session.peerLatI = 0;
+    _session.peerLonI = 0;
+    _session.peerLastUpdateSec = 0;
+    _session.peerBatteryPct = 0;
+    _session.peerHasGPS = false;
+    _pendingPairNodeNum = 0;
+    setState(State::TRACKED);
+}
+
+// --- Saved Desires ----------------------------------------------------
+
+bool CompassState::isKnownDesire(uint32_t nodeNum) const {
+    for (uint8_t i = 0; i < _savedDesireCount; ++i) {
+        if (_savedDesires[i].nodeNum == nodeNum) return true;
+    }
+    return false;
+}
+
+void CompassState::saveDesire(uint32_t nodeNum, const char *name) {
+    // Update existing entry if present.
+    for (uint8_t i = 0; i < _savedDesireCount; ++i) {
+        if (_savedDesires[i].nodeNum == nodeNum) {
+            clampString(_savedDesires[i].name, sizeof(_savedDesires[0].name), name);
+            saveDesiresFile();
+            return;
+        }
+    }
+    if (_savedDesireCount >= MAX_SAVED_DESIRES) return;  // full; caller can prune via deleteDesire
+    _savedDesires[_savedDesireCount].nodeNum = nodeNum;
+    clampString(_savedDesires[_savedDesireCount].name, sizeof(_savedDesires[0].name), name);
+    ++_savedDesireCount;
+    saveDesiresFile();
+}
+
+void CompassState::deleteDesire(uint8_t i) {
+    if (i >= _savedDesireCount) return;
+    for (uint8_t j = i; j < _savedDesireCount - 1; ++j) {
+        _savedDesires[j] = _savedDesires[j + 1];
+    }
+    --_savedDesireCount;
+    saveDesiresFile();
 }
 
 // --- Session management ------------------------------------------------
@@ -359,6 +412,45 @@ void CompassState::saveTreasuresFile() {
     f.write(reinterpret_cast<const uint8_t *>(&hdr), sizeof(hdr));
     for (uint8_t i = 0; i < _treasureCount; ++i) {
         f.write(reinterpret_cast<const uint8_t *>(&_treasures[i]), sizeof(Treasure));
+    }
+    f.close();
+}
+
+void CompassState::loadDesiresFile() {
+    File f = FSCom.open(DESIRES_PATH, FILE_O_READ);
+    if (!f) return;
+    DesiresHeader hdr = {};
+    if (f.read(reinterpret_cast<uint8_t *>(&hdr), sizeof(hdr)) != sizeof(hdr)) {
+        f.close();
+        return;
+    }
+    if (hdr.version != DESIRES_SCHEMA_VERSION) {
+        f.close();
+        return;
+    }
+    if (hdr.count > MAX_SAVED_DESIRES) hdr.count = MAX_SAVED_DESIRES;
+    for (uint8_t i = 0; i < hdr.count; ++i) {
+        if (f.read(reinterpret_cast<uint8_t *>(&_savedDesires[i]), sizeof(SavedDesire)) != sizeof(SavedDesire)) {
+            _savedDesireCount = i;
+            f.close();
+            return;
+        }
+    }
+    _savedDesireCount = hdr.count;
+    f.close();
+}
+
+void CompassState::saveDesiresFile() {
+    if (!ensureCompassDir()) return;
+    FSCom.remove(DESIRES_PATH);
+    File f = FSCom.open(DESIRES_PATH, FILE_O_WRITE);
+    if (!f) return;
+    DesiresHeader hdr = {};
+    hdr.version = DESIRES_SCHEMA_VERSION;
+    hdr.count = _savedDesireCount;
+    f.write(reinterpret_cast<const uint8_t *>(&hdr), sizeof(hdr));
+    for (uint8_t i = 0; i < _savedDesireCount; ++i) {
+        f.write(reinterpret_cast<const uint8_t *>(&_savedDesires[i]), sizeof(SavedDesire));
     }
     f.close();
 }

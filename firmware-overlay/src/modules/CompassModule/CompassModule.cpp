@@ -10,6 +10,8 @@
 #include "configuration.h"
 #include "input/InputBroker.h"
 #include "mesh/mesh-pb-constants.h"
+#include "CompassMenu.h"
+#include "graphics/draw/MenuHandler.h"
 
 CompassModule *CompassModule::instance = nullptr;
 
@@ -121,6 +123,7 @@ void CompassModule::sendPacket(uint32_t to, uint8_t hopLimit, const meshtastic_C
 }
 
 void CompassModule::sendCapabilityQuery() {
+    _discoveryBannerQueued = false;
     _state.startDiscovery();
     notifyUIChanged();
     meshtastic_CompassPacket pkt = meshtastic_CompassPacket_init_default;
@@ -199,8 +202,19 @@ void CompassModule::handleCapabilityAdv(const meshtastic_MeshPacket &mp,
 
 void CompassModule::handlePairRequest(const meshtastic_MeshPacket &mp) {
     if (_isFromSelf(mp)) return;
-    _state.onPairRequestReceived(mp.from);
-    notifyUIChanged();
+    if (_state.isKnownDesire(mp.from)) {
+        const meshtastic_NodeInfoLite *info = nodeDB ? nodeDB->getMeshNode(mp.from) : nullptr;
+        const char *name = (info && info->has_user) ? info->user.long_name : "";
+        _state.autoAcceptPair(mp.from, name[0] ? name : "??");
+        sendPairAccept(mp.from);
+        static char msg[32];
+        snprintf(msg, sizeof(msg), "Tracking %.20s", name[0] ? name : "peer");
+        compass::CompassMenu::pendingToast = msg;
+        graphics::menuHandler::menuQueue = graphics::menuHandler::compass_toast;
+    } else {
+        _state.onPairRequestReceived(mp.from);
+        _pendingPairBanner = true;
+    }
 }
 
 void CompassModule::handlePairAccept(const meshtastic_MeshPacket &mp) {
@@ -208,8 +222,12 @@ void CompassModule::handlePairAccept(const meshtastic_MeshPacket &mp) {
     const meshtastic_NodeInfoLite *info = nodeDB ? nodeDB->getMeshNode(mp.from) : nullptr;
     const char *peerName = (info && info->has_user) ? info->user.long_name : "";
     _state.onPairAccepted(mp.from, peerName);
+    _state.saveDesire(mp.from, peerName[0] ? peerName : "??");
     sendPairConfirm(mp.from);
-    notifyUIChanged();
+    static char trackMsg[32];
+    snprintf(trackMsg, sizeof(trackMsg), "Tracking %.20s", peerName[0] ? peerName : "peer");
+    compass::CompassMenu::pendingToast = trackMsg;
+    graphics::menuHandler::menuQueue = graphics::menuHandler::compass_toast;
 }
 
 void CompassModule::handlePairConfirm(const meshtastic_MeshPacket &mp) {
@@ -221,7 +239,8 @@ void CompassModule::handlePairConfirm(const meshtastic_MeshPacket &mp) {
 void CompassModule::handlePairReject(const meshtastic_MeshPacket &mp) {
     if (_isFromSelf(mp)) return;
     _state.onPairRejected();
-    notifyUIChanged();
+    compass::CompassMenu::pendingToast = "Pair rejected.";
+    graphics::menuHandler::menuQueue = graphics::menuHandler::compass_toast;
 }
 
 void CompassModule::handlePositionUpdate(const meshtastic_MeshPacket &mp,
@@ -247,6 +266,12 @@ int32_t CompassModule::runOnce() {
     // site). Inline notifyUIChanged() calls in send/handle helpers cover
     // user-action latency; this loop catches whatever they miss.
     State current = _state.getState();
+
+    if (_pendingPairBanner && current == State::PAIR_INCOMING) {
+        _pendingPairBanner = false;
+        graphics::menuHandler::menuQueue = graphics::menuHandler::compass_pair_incoming;
+    }
+
     if (current != _prevState) {
         notifyUIChanged();
         _prevState = current;
@@ -259,10 +284,15 @@ int32_t CompassModule::runOnce() {
 
     switch (current) {
         case State::IDLE:
-        case State::DISCOVERING:
         case State::AWAITING_PAIR_ACCEPT:
         case State::PAIR_INCOMING:
         case State::CALIBRATING:
+            return 500;
+        case State::DISCOVERING:
+            if (!_state.isDiscoveryWindowOpen() && !_discoveryBannerQueued) {
+                _discoveryBannerQueued = true;
+                graphics::menuHandler::menuQueue = graphics::menuHandler::compass_discovery_results;
+            }
             return 500;
         case State::TRACKED:
             return tickTracked();

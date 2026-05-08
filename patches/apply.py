@@ -186,7 +186,10 @@ def patch_menuhandler_h(dry_run=False):
             f"        /* {MARKER} */\n"
             "        compass_menu,\n"
             "        compass_treasure_picker,\n"
-            "        compass_toast\n"
+            "        compass_toast,\n"
+            "        compass_discovery_results,\n"
+            "        compass_pair_incoming,\n"
+            "        compass_saved_desires\n"
             "    };"
         ),
         dry_run=dry_run,
@@ -273,6 +276,15 @@ def patch_screen_cpp(dry_run=False):
         "        break;\n"
         "    case compass_toast:\n"
         "        compass::CompassMenu::showPendingToast();\n"
+        "        break;\n"
+        "    case compass_discovery_results:\n"
+        "        compass::CompassMenu::buildDiscoveryResults();\n"
+        "        break;\n"
+        "    case compass_pair_incoming:\n"
+        "        compass::CompassMenu::buildPairIncoming();\n"
+        "        break;\n"
+        "    case compass_saved_desires:\n"
+        "        compass::CompassMenu::buildSavedDesires();\n"
         "        break;"
     )
     text = text.replace(switch_anchor, switch_replacement, 1)
