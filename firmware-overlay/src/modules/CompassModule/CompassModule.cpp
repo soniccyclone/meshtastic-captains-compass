@@ -202,8 +202,19 @@ void CompassModule::handleCapabilityAdv(const meshtastic_MeshPacket &mp,
 
 void CompassModule::handlePairRequest(const meshtastic_MeshPacket &mp) {
     if (_isFromSelf(mp)) return;
-    _state.onPairRequestReceived(mp.from);
-    _pendingPairBanner = true;
+    if (_state.isKnownDesire(mp.from)) {
+        const meshtastic_NodeInfoLite *info = nodeDB ? nodeDB->getMeshNode(mp.from) : nullptr;
+        const char *name = (info && info->has_user) ? info->user.long_name : "";
+        _state.autoAcceptPair(mp.from, name[0] ? name : "??");
+        sendPairAccept(mp.from);
+        static char msg[32];
+        snprintf(msg, sizeof(msg), "Tracking %.20s", name[0] ? name : "peer");
+        compass::CompassMenu::pendingToast = msg;
+        graphics::menuHandler::menuQueue = graphics::menuHandler::compass_toast;
+    } else {
+        _state.onPairRequestReceived(mp.from);
+        _pendingPairBanner = true;
+    }
 }
 
 void CompassModule::handlePairAccept(const meshtastic_MeshPacket &mp) {
@@ -211,6 +222,7 @@ void CompassModule::handlePairAccept(const meshtastic_MeshPacket &mp) {
     const meshtastic_NodeInfoLite *info = nodeDB ? nodeDB->getMeshNode(mp.from) : nullptr;
     const char *peerName = (info && info->has_user) ? info->user.long_name : "";
     _state.onPairAccepted(mp.from, peerName);
+    _state.saveDesire(mp.from, peerName[0] ? peerName : "??");
     sendPairConfirm(mp.from);
     static char trackMsg[32];
     snprintf(trackMsg, sizeof(trackMsg), "Tracking %.20s", peerName[0] ? peerName : "peer");
